@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, numeric, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, numeric, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -63,6 +63,7 @@ export const leads = pgTable("leads", {
   index("leads_place_id_idx").on(table.placeId),
   index("leads_pipeline_type_idx").on(table.pipelineType),
   index("leads_assigned_to_idx").on(table.assignedToUserId),
+  uniqueIndex("leads_pipeline_place_unique").on(table.pipelineType, table.placeId).where(sql`place_id IS NOT NULL`),
 ]);
 
 export const callLogs = pgTable("call_logs", {

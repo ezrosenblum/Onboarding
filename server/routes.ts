@@ -173,7 +173,8 @@ export async function registerRoutes(
       const data = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
 
       let imported = 0;
-      let skipped = 0;
+      let duplicatesSkipped = 0;
+      let invalidSkipped = 0;
 
       for (const row of data) {
         const leadData: any = { pipelineType, sourceFile: req.file.originalname };
@@ -192,14 +193,14 @@ export async function registerRoutes(
         }
 
         if (!leadData.companyName) {
-          skipped++;
+          invalidSkipped++;
           continue;
         }
 
         if (leadData.placeId) {
           const existing = await storage.getLeadByPlaceIdAndPipeline(leadData.placeId, pipelineType);
           if (existing) {
-            skipped++;
+            duplicatesSkipped++;
             continue;
           }
         }
@@ -208,7 +209,7 @@ export async function registerRoutes(
         imported++;
       }
 
-      res.json({ imported, skipped });
+      res.json({ imported, duplicatesSkipped, invalidSkipped, total: data.length });
     } catch (err: any) {
       res.status(500).json({ message: "Import failed: " + err.message });
     }

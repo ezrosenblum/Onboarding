@@ -46,7 +46,7 @@ export default function UploadLeadsPage() {
   const [previewRows, setPreviewRows] = useState<any[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [pipelineType, setPipelineType] = useState<string>("vendor");
-  const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [result, setResult] = useState<{ imported: number; duplicatesSkipped: number; invalidSkipped: number; total: number } | null>(null);
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -266,13 +266,23 @@ export default function UploadLeadsPage() {
             <p className="text-lg font-semibold" data-testid="text-import-success">Import Complete</p>
             <div className="flex items-center justify-center gap-6 mt-4">
               <div>
-                <p className="text-2xl font-bold" data-testid="text-imported-count">{result.imported}</p>
+                <p className="text-2xl font-bold" data-testid="text-total-count">{result.total}</p>
+                <p className="text-xs text-muted-foreground">Total Rows</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-green-600" data-testid="text-imported-count">{result.imported}</p>
                 <p className="text-xs text-muted-foreground">Imported</p>
               </div>
               <div>
-                <p className="text-2xl font-bold" data-testid="text-skipped-count">{result.skipped}</p>
-                <p className="text-xs text-muted-foreground">Skipped (duplicates)</p>
+                <p className="text-2xl font-bold text-yellow-600" data-testid="text-duplicates-count">{result.duplicatesSkipped}</p>
+                <p className="text-xs text-muted-foreground">Duplicates Skipped</p>
               </div>
+              {result.invalidSkipped > 0 && (
+                <div>
+                  <p className="text-2xl font-bold text-red-600" data-testid="text-invalid-count">{result.invalidSkipped}</p>
+                  <p className="text-xs text-muted-foreground">Invalid (no name)</p>
+                </div>
+              )}
             </div>
             <Button onClick={reset} className="mt-6" data-testid="button-upload-another">
               <Upload className="h-4 w-4 mr-2" /> Upload Another
