@@ -120,21 +120,26 @@ export async function registerRoutes(
 
   app.get("/api/leads/today", requireAuth, async (req, res) => {
     const userId = req.user!.id;
-    const [newLeads, retryLeads, completedLeads, callsToday, allAssigned] = await Promise.all([
-      storage.getNewLeads(userId),
-      storage.getRetryLeads(userId),
+    const includeUnreachable = req.query.includeUnreachable === "true";
+
+    const [newLeads, retryLeads, activeLeads, completedLeads, callsToday, allAssigned, retryEligibleCount] = await Promise.all([
+      storage.getNewLeads(userId, includeUnreachable),
+      storage.getRetryLeads(userId, includeUnreachable),
+      storage.getActiveLeads(userId, includeUnreachable),
       storage.getCompletedLeads(userId),
       storage.getCallLogsTodayByUserId(userId),
       storage.getLeadsByUserId(userId),
+      storage.getRetryEligibleCount(userId),
     ]);
 
     res.json({
       newLeads,
       retryLeads,
+      activeLeads,
       completedLeads,
       counters: {
         totalAssigned: allAssigned.length,
-        retryEligible: retryLeads.length,
+        retryEligible: retryEligibleCount,
         attemptsMadeToday: callsToday,
       },
       dailyCallTarget: req.user!.dailyCallTarget || null,

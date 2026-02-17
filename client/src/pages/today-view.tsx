@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Lead } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,15 +6,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { CallModal } from "@/components/call-modal";
 import {
   Phone, Building2, MapPin, PhoneCall, RotateCcw, CheckCircle2,
-  Target, Clock, Zap
+  Target, Clock, Zap, AlertTriangle, Activity
 } from "lucide-react";
 
 interface TodayData {
   newLeads: Lead[];
   retryLeads: Lead[];
+  activeLeads: Lead[];
   completedLeads: Lead[];
   counters: {
     totalAssigned: number;
@@ -51,17 +54,38 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
 }
 
 export default function TodayViewPage() {
-  const { data, isLoading } = useQuery<TodayData>({ queryKey: ["/api/leads/today"] });
+  const [showUnreachable, setShowUnreachable] = useState(false);
+  const queryClient = useQueryClient();
+
+  const queryKey = ["/api/leads/today", showUnreachable ? "unreachable" : "reachable"];
+  const { data, isLoading } = useQuery<TodayData>({
+    queryKey,
+    queryFn: async () => {
+      const url = showUnreachable
+        ? "/api/leads/today?includeUnreachable=true"
+        : "/api/leads/today";
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+  });
+
   const [callLead, setCallLead] = useState<Lead | null>(null);
 
   const newLeads = data?.newLeads ?? [];
   const retryLeads = data?.retryLeads ?? [];
+  const activeLeads = data?.activeLeads ?? [];
   const completedLeads = data?.completedLeads ?? [];
   const counters = data?.counters;
   const target = data?.dailyCallTarget;
 
   const suggestedNew = target ? Math.round(target * 0.8) : null;
   const suggestedRetry = target ? Math.round(target * 0.2) : null;
+
+  const handleUnreachableToggle = (checked: boolean) => {
+    setShowUnreachable(checked);
+    queryClient.invalidateQueries({ queryKey: ["/api/leads/today"] });
+  };
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
@@ -137,6 +161,19 @@ export default function TodayViewPage() {
         </Card>
       )}
 
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="show-unreachable"
+          checked={showUnreachable}
+          onCheckedChange={(checked) => handleUnreachableToggle(checked === true)}
+          data-testid="checkbox-show-unreachable"
+        />
+        <Label htmlFor="show-unreachable" className="text-sm text-muted-foreground cursor-pointer flex items-center gap-1.5">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          Show Unreachable
+        </Label>
+      </div>
+
       <Tabs defaultValue="new">
         <TabsList>
           <TabsTrigger value="new" data-testid="tab-new">
@@ -144,6 +181,9 @@ export default function TodayViewPage() {
           </TabsTrigger>
           <TabsTrigger value="retry" data-testid="tab-retry">
             Retry ({retryLeads.length})
+          </TabsTrigger>
+          <TabsTrigger value="active" data-testid="tab-active">
+            Active / Pending ({activeLeads.length})
           </TabsTrigger>
           <TabsTrigger value="completed" data-testid="tab-completed">
             Completed ({completedLeads.length})
@@ -158,8 +198,12 @@ export default function TodayViewPage() {
           <LeadList leads={retryLeads} onCallClick={setCallLead} emptyMessage="No leads eligible for retry right now." isLoading={isLoading} showRetryInfo />
         </TabsContent>
 
+        <TabsContent value="active" className="mt-4">
+          <LeadList leads={activeLeads} onCallClick={setCallLead} emptyMessage="No active leads right now." isLoading={isLoading} />
+        </TabsContent>
+
         <TabsContent value="completed" className="mt-4">
-          <LeadList leads={completedLeads} onCallClick={null} emptyMessage="No completed leads yet." isLoading={isLoading} />
+          <LeadList leads={completedLeads} onCallClick={null} emptyMessage="No completed signups yet." isLoading={isLoading} />
         </TabsContent>
       </Tabs>
 
@@ -208,7 +252,14 @@ function LeadList({ leads, onCallClick, emptyMessage, isLoading, showRetryInfo }
                 <Building2 className="h-5 w-5 text-muted-foreground" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-medium truncate" data-testid={`text-today-company-${lead.id}`}>{lead.companyName}</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-medium truncate" data-testid={`text-today-company-${lead.id}`}>{lead.companyName}</p>
+                  {lead.unreachable && (
+                    <Badge variant="destructive" className="text-xs">
+                      Unreachable
+                    </Badge>
+                  )}
+                </div>
                 <div className="flex items-center gap-3 flex-wrap mt-1">
                   {lead.city && (
                     <span className="text-xs text-muted-foreground flex items-center gap-1">
@@ -230,9 +281,16 @@ function LeadList({ leads, onCallClick, emptyMessage, isLoading, showRetryInfo }
                   <span className="text-xs text-muted-foreground">{lead.attemptCount} attempt{lead.attemptCount !== 1 ? "s" : ""}</span>
                 )}
                 {showRetryInfo && lead.retryNextEligibleAt && (
-                  <span className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Clock className="h-3 w-3" />Eligible
-                  </span>
+                  new Date(lead.retryNextEligibleAt) <= new Date() ? (
+                    <Badge variant="outline" className="text-xs">
+                      <Clock className="h-3 w-3 mr-1" />Eligible Now
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="text-xs">
+                      <Clock className="h-3 w-3 mr-1" />
+                      {new Date(lead.retryNextEligibleAt).toLocaleDateString()}
+                    </Badge>
+                  )
                 )}
               </div>
               {onCallClick && (

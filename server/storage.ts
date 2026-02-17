@@ -18,8 +18,10 @@ export interface IStorage {
   updateLead(id: number, data: Partial<Lead>): Promise<Lead | undefined>;
   assignLeads(callerId: number, count: number, filters?: { state?: string; category?: string }): Promise<number>;
 
-  getNewLeads(userId: number): Promise<Lead[]>;
-  getRetryLeads(userId: number): Promise<Lead[]>;
+  getNewLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
+  getRetryLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
+  getRetryEligibleCount(userId: number): Promise<number>;
+  getActiveLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
   getCompletedLeads(userId: number): Promise<Lead[]>;
 
   createCallLog(data: InsertCallLog): Promise<CallLog>;
@@ -132,35 +134,62 @@ export class DatabaseStorage implements IStorage {
     return ids.length;
   }
 
-  async getNewLeads(userId: number): Promise<Lead[]> {
+  async getNewLeads(userId: number, includeUnreachable = false): Promise<Lead[]> {
+    const conditions = [
+      eq(leads.assignedToUserId, userId),
+      eq(leads.statusCall, "NOT_CALLED"),
+      sql`${leads.statusSignup} != 'SIGNED_UP'`,
+    ];
+    if (!includeUnreachable) conditions.push(eq(leads.unreachable, false));
     return db.select().from(leads)
-      .where(and(
-        eq(leads.assignedToUserId, userId),
-        eq(leads.statusCall, "NOT_CALLED"),
-        eq(leads.unreachable, false),
-        sql`${leads.statusSignup} != 'SIGNED_UP'`
-      ))
+      .where(and(...conditions))
       .orderBy(asc(leads.createdAt));
   }
 
-  async getRetryLeads(userId: number): Promise<Lead[]> {
-    const now = new Date();
+  async getRetryLeads(userId: number, includeUnreachable = false): Promise<Lead[]> {
+    const conditions = [
+      eq(leads.assignedToUserId, userId),
+      sql`${leads.statusCall} != 'NOT_CALLED'`,
+      sql`${leads.statusSignup} != 'SIGNED_UP'`,
+      sql`${leads.retryNextEligibleAt} IS NOT NULL`,
+    ];
+    if (!includeUnreachable) conditions.push(eq(leads.unreachable, false));
     return db.select().from(leads)
+      .where(and(...conditions))
+      .orderBy(asc(leads.retryNextEligibleAt));
+  }
+
+  async getRetryEligibleCount(userId: number): Promise<number> {
+    const now = new Date();
+    const result = await db.select({ count: sql<number>`count(*)` }).from(leads)
       .where(and(
         eq(leads.assignedToUserId, userId),
         eq(leads.unreachable, false),
-        sql`${leads.statusCall} != 'NOT_CALLED'`,
         sql`${leads.statusSignup} != 'SIGNED_UP'`,
+        sql`${leads.retryNextEligibleAt} IS NOT NULL`,
         lte(leads.retryNextEligibleAt, now)
-      ))
-      .orderBy(asc(leads.retryNextEligibleAt));
+      ));
+    return Number(result[0].count);
+  }
+
+  async getActiveLeads(userId: number, includeUnreachable = false): Promise<Lead[]> {
+    const conditions = [
+      eq(leads.assignedToUserId, userId),
+      sql`${leads.statusSignup} != 'SIGNED_UP'`,
+      sql`${leads.statusCall} IN ('SPOKE_SEND_INFO', 'SPOKE_FOLLOW_UP', 'SPOKE_INTERESTED', 'SPOKE_NOT_INTERESTED')`,
+      sql`${leads.retryNextEligibleAt} IS NULL`,
+    ];
+    if (!includeUnreachable) conditions.push(eq(leads.unreachable, false));
+    return db.select().from(leads)
+      .where(and(...conditions))
+      .orderBy(desc(leads.createdAt));
   }
 
   async getCompletedLeads(userId: number): Promise<Lead[]> {
     return db.select().from(leads)
       .where(and(
         eq(leads.assignedToUserId, userId),
-        sql`(${leads.statusSignup} = 'SIGNED_UP' OR ${leads.unreachable} = true OR ${leads.statusCall} IN ('SPOKE_NOT_INTERESTED', 'SPOKE_INTERESTED', 'SPOKE_SEND_INFO', 'SPOKE_FOLLOW_UP'))`
+        sql`${leads.statusSignup} = 'SIGNED_UP'`
       ))
       .orderBy(desc(leads.createdAt));
   }

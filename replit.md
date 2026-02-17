@@ -17,7 +17,7 @@ Internal calling + email + tracking system for onboarding vendors and buyers. St
 - `client/src/lib/auth.tsx` - Auth context/provider
 - `client/src/components/app-sidebar.tsx` - Navigation sidebar
 - `client/src/components/call-modal.tsx` - Call logging popup modal
-- `client/src/pages/today-view.tsx` - Caller Today View (NEW/RETRY/COMPLETED tabs)
+- `client/src/pages/today-view.tsx` - Caller Today View (NEW/RETRY/ACTIVE-PENDING/COMPLETED tabs)
 - `client/src/pages/` - All page components
 
 ## Roles
@@ -31,9 +31,19 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 ### Retry Logic
 - Retry outcomes (NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED): schedule retry after N business days
 - SPOKE_NOT_INTERESTED: marks lead unreachable
-- SPOKE_SEND_INFO, SPOKE_FOLLOW_UP, SPOKE_INTERESTED: no retry, no unreachable
+- SPOKE_SEND_INFO, SPOKE_FOLLOW_UP, SPOKE_INTERESTED: no retry, no unreachable — goes to ACTIVE/PENDING tab
 - Max retry attempts and delay configurable via system_settings table
 - Business day calculation skips Saturday and Sunday
+
+### Today View Tab Mapping (Stage 2.1)
+- **NEW**: statusCall=NOT_CALLED, unreachable=false, statusSignup!=SIGNED_UP
+- **RETRY**: retryNextEligibleAt IS NOT NULL, unreachable=false, statusSignup!=SIGNED_UP
+  - Shows both eligible-now and future-retry leads (with date indicators)
+  - Stats bar "Retry Eligible" count only counts eligible-now leads
+- **ACTIVE/PENDING**: statusCall IN (SPOKE_SEND_INFO, SPOKE_FOLLOW_UP, SPOKE_INTERESTED, SPOKE_NOT_INTERESTED) AND retryNextEligibleAt IS NULL, unreachable=false, statusSignup!=SIGNED_UP
+- **COMPLETED**: statusSignup=SIGNED_UP only (placeholder for webhook)
+- Unreachable leads hidden by default; toggle "Show Unreachable" checkbox to include them in NEW/RETRY/ACTIVE tabs
+- Invariant: retry outcomes always set either retryNextEligibleAt or unreachable=true, ensuring no lead disappears
 
 ## Seed Data
 - Default admin: admin@supplystreamline.com / admin123
