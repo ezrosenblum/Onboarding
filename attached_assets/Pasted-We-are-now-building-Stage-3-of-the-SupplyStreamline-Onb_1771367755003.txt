@@ -1,0 +1,269 @@
+We are now building Stage 3 of the SupplyStreamline Onboarding system: Outbound email + tracking.
+
+IMPORTANT SECURITY:
+
+Do NOT hardcode any API keys.
+
+Use Replit Secrets env var: SENDGRID_API_KEY.
+
+Sender must be: connect@supplystreamline.com (clean domain).
+
+Do NOT start inbound email parsing yet (that’s later). This stage is outbound + event tracking only.
+
+1) Database changes (Stage 3)
+
+Add these fields to leads (if not already present):
+
+lead_token (text, unique, not null) // generated once per lead for tracking
+
+email_last_sent_at (timestamp nullable)
+
+email_sent_count (int default 0)
+
+Create a new table email_logs:
+
+id (pk)
+
+lead_id (fk)
+
+user_id (fk) // who sent it
+
+template_type (text) // SEND_INFO / FOLLOW_UP / UNREACHABLE_OUTREACH
+
+to_email (text)
+
+from_email (text default connect@supplystreamline.com
+)
+
+subject (text)
+
+body_html (text)
+
+sendgrid_message_id (text nullable)
+
+status (text default SENT) // SENT/FAILED
+
+created_at
+
+Create a new table email_events:
+
+id (pk)
+
+lead_id (fk)
+
+event_type (text) // delivered/open/click/bounce/spamreport/etc
+
+sg_message_id (text nullable)
+
+timestamp (timestamp)
+
+url (text nullable) // for click events
+
+raw (json/text) // store raw event payload
+
+created_at
+
+Also ensure leads.status_email exists and uses these values:
+
+NOT_SENT (default)
+
+SENT
+
+OPENED
+
+CLICKED
+
+2) Lead Token generation
+
+When importing leads OR when a lead is first created:
+
+Generate lead_token (UUID or strong random token)
+
+Ensure uniqueness (unique index/constraint).
+
+Tracking URL format:
+
+Use a placeholder SupplyStreamline signup URL for now:
+https://supplystreamline.com/signup?ref={{lead_token}}
+
+(We will wire “signup completed” webhook later.)
+
+3) Email Templates (V1)
+
+Implement 3 templates for the VENDOR pipeline (Buyer later by duplication):
+
+Template A: SEND_INFO
+
+Rules:
+
+Allowed only if:
+
+Lead has at least 1 call_log
+
+confirmed_email is present and non-empty
+
+lead is NOT unreachable
+Email:
+
+To: confirmed_email
+
+Subject: simple, professional
+
+Body: “Pleasure speaking…” + short SS summary + CTA link with ref token
+
+Template B: FOLLOW_UP
+
+Rules:
+
+Allowed only if:
+
+Same rules as SEND_INFO (call log + confirmed_email)
+
+At least one prior email_log exists for this lead with template_type SEND_INFO
+Email:
+
+To: confirmed_email
+
+Subject/body: short follow-up + same ref link
+
+Template C: UNREACHABLE_OUTREACH
+
+Rules:
+
+Allowed if:
+
+lead.unreachable = true OR lead reached max retry attempts
+
+AND email exists (prefer confirmed_email if present, else scraped_email)
+Email:
+
+To: confirmed_email ?? scraped_email
+
+Subject/body: “We tried reaching you…” + “free right now” + ref link
+
+All emails must send from:
+
+connect@supplystreamline.com
+
+4) UI changes
+Lead Detail page (Vendor Caller + Admin)
+
+Add an Email tab showing:
+
+List of email_logs for that lead (sent emails only for now)
+
+Each item shows: template_type, to_email, sent timestamp, and a snippet.
+
+Add 3 buttons (Send Info, Follow Up, Unreachable Outreach).
+
+Buttons must be enabled/disabled per the rules above.
+
+If disabled, show a small tooltip/message explaining why (e.g., “Add confirmed email first” / “Log a call first”).
+
+When a button is clicked:
+
+Send email via SendGrid
+
+Create email_log row
+
+Update lead.status_email:
+
+When first sent: SENT
+
+Increment lead.email_sent_count and set email_last_sent_at
+
+Caller Today View counters (optional but recommended)
+
+Add a small stat:
+
+“Emails sent today”
+And a conversion helper:
+
+“Call → Email % today” = emails_sent_today / calls_logged_today
+
+5) Backend endpoints
+
+Create endpoints:
+
+POST /api/leads/:id/email/send with body { templateType }
+
+Server validates gating rules
+
+Builds email subject/body
+
+Sends with SendGrid using SENDGRID_API_KEY
+
+Stores email_log
+
+Returns success + email_log item
+
+POST /api/sendgrid/events
+
+This will receive SendGrid Event Webhook payloads (array of events)
+
+For each event:
+
+Identify the lead by:
+
+unique_args.lead_token OR a custom arg you set on send
+
+OR by matching sg_message_id to email_logs.sendgrid_message_id
+
+Store event in email_events
+
+Update lead.status_email:
+
+If open event: status_email = OPENED (unless already CLICKED)
+
+If click event: status_email = CLICKED
+
+IMPORTANT:
+
+When sending email via SendGrid, include a custom arg / unique arg so events can map back:
+
+custom_args: { lead_token: <token>, lead_id: <id> } (or SendGrid equivalent)
+
+Do not put the lead ID in the email subject.
+
+6) SendGrid configuration notes (in README)
+
+Update README with:
+
+Add SENDGRID_API_KEY in Replit Secrets
+
+Configure SendGrid “Event Webhook” to point to:
+https://<your-replit-app-domain>/api/sendgrid/events
+
+Enable at least: delivered, open, click, bounce, spamreport
+
+(Do NOT implement inbound parse yet.)
+
+7) Testing
+
+Add a “mock mode” fallback if SENDGRID_API_KEY is missing:
+
+Don’t send, but still create email_log with status “MOCK_SENT”
+
+Helpful for development
+
+Add basic tests:
+
+Cannot send SEND_INFO without call log + confirmed_email
+
+Unreachable outreach works with scraped_email
+
+open/click events update lead.status_email correctly
+
+Deliverables:
+
+Updated schema + migrations
+
+Working UI buttons with gating
+
+Email logs visible on lead
+
+Event webhook updates lead status
+
+README instructions for configuring SendGrid event webhook
+
+Do not start Stage 4 (AI Research) yet.
