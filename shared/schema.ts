@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, numeric, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, numeric, index, uniqueIndex, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -23,8 +23,11 @@ export const retryOutcomes: readonly CallOutcome[] = ["NO_ANSWER", "VOICEMAIL", 
 export const callStatusEnum = ["NOT_CALLED", ...callOutcomeEnum] as const;
 export type CallStatus = (typeof callStatusEnum)[number];
 
-export const emailStatusEnum = ["NOT_SENT", "SENT", "BOUNCED", "REPLIED"] as const;
+export const emailStatusEnum = ["NOT_SENT", "SENT", "OPENED", "CLICKED", "BOUNCED", "REPLIED"] as const;
 export type EmailStatus = (typeof emailStatusEnum)[number];
+
+export const emailTemplateTypeEnum = ["SEND_INFO", "FOLLOW_UP", "UNREACHABLE_OUTREACH"] as const;
+export type EmailTemplateType = (typeof emailTemplateTypeEnum)[number];
 
 export const signupStatusEnum = ["NOT_SIGNED_UP", "PENDING", "SIGNED_UP"] as const;
 export type SignupStatus = (typeof signupStatusEnum)[number];
@@ -71,6 +74,9 @@ export const leads = pgTable("leads", {
   unreachable: boolean("unreachable").notNull().default(false),
   bestTimeToCall: text("best_time_to_call"),
   retryNextEligibleAt: timestamp("retry_next_eligible_at"),
+  leadToken: text("lead_token").notNull().unique().default(sql`gen_random_uuid()`),
+  emailLastSentAt: timestamp("email_last_sent_at"),
+  emailSentCount: integer("email_sent_count").notNull().default(0),
   assignedToUserId: integer("assigned_to_user_id").references(() => users.id),
   assignedAt: timestamp("assigned_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -78,6 +84,7 @@ export const leads = pgTable("leads", {
   index("leads_place_id_idx").on(table.placeId),
   index("leads_pipeline_type_idx").on(table.pipelineType),
   index("leads_assigned_to_idx").on(table.assignedToUserId),
+  index("leads_lead_token_idx").on(table.leadToken),
   uniqueIndex("leads_pipeline_place_unique").on(table.pipelineType, table.placeId).where(sql`place_id IS NOT NULL`),
 ]);
 
@@ -98,6 +105,31 @@ export const leadNotes = pgTable("lead_notes", {
   leadId: integer("lead_id").notNull().references(() => leads.id),
   userId: integer("user_id").notNull().references(() => users.id),
   note: text("note").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const emailLogs = pgTable("email_logs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull().references(() => leads.id),
+  userId: integer("user_id").notNull().references(() => users.id),
+  templateType: text("template_type").notNull().$type<EmailTemplateType>(),
+  toEmail: text("to_email").notNull(),
+  fromEmail: text("from_email").notNull().default("connect@supplystreamline.com"),
+  subject: text("subject").notNull(),
+  bodyHtml: text("body_html").notNull(),
+  sendgridMessageId: text("sendgrid_message_id"),
+  status: text("status").notNull().default("SENT"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const emailEvents = pgTable("email_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull().references(() => leads.id),
+  eventType: text("event_type").notNull(),
+  sgMessageId: text("sg_message_id"),
+  timestamp: timestamp("timestamp").notNull(),
+  url: text("url"),
+  raw: json("raw"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -123,6 +155,14 @@ export type CallLog = typeof callLogs.$inferSelect;
 export const insertLeadNoteSchema = createInsertSchema(leadNotes).omit({ id: true, createdAt: true });
 export type InsertLeadNote = z.infer<typeof insertLeadNoteSchema>;
 export type LeadNote = typeof leadNotes.$inferSelect;
+
+export const insertEmailLogSchema = createInsertSchema(emailLogs).omit({ id: true, createdAt: true });
+export type InsertEmailLog = z.infer<typeof insertEmailLogSchema>;
+export type EmailLog = typeof emailLogs.$inferSelect;
+
+export const insertEmailEventSchema = createInsertSchema(emailEvents).omit({ id: true, createdAt: true });
+export type InsertEmailEvent = z.infer<typeof insertEmailEventSchema>;
+export type EmailEvent = typeof emailEvents.$inferSelect;
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
 

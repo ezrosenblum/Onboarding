@@ -6,9 +6,10 @@ import * as XLSX from "xlsx";
 import { storage } from "./storage";
 import { db } from "./db";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
-import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, callLogs, leads } from "@shared/schema";
-import type { InsertLead, CallOutcome } from "@shared/schema";
+import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, emailTemplateTypeEnum, callLogs, leads } from "@shared/schema";
+import type { InsertLead, CallOutcome, EmailTemplateType } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { buildEmailContent, sendEmail } from "./email-service";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -122,7 +123,7 @@ export async function registerRoutes(
     const userId = req.user!.id;
     const includeUnreachable = req.query.includeUnreachable === "true";
 
-    const [newLeads, retryLeads, activeLeads, completedLeads, callsToday, allAssigned, retryEligibleCount] = await Promise.all([
+    const [newLeads, retryLeads, activeLeads, completedLeads, callsToday, allAssigned, retryEligibleCount, emailsToday] = await Promise.all([
       storage.getNewLeads(userId, includeUnreachable),
       storage.getRetryLeads(userId, includeUnreachable),
       storage.getActiveLeads(userId, includeUnreachable),
@@ -130,6 +131,7 @@ export async function registerRoutes(
       storage.getCallLogsTodayByUserId(userId),
       storage.getLeadsByUserId(userId),
       storage.getRetryEligibleCount(userId),
+      storage.getEmailsSentTodayByUserId(userId),
     ]);
 
     res.json({
@@ -141,6 +143,7 @@ export async function registerRoutes(
         totalAssigned: allAssigned.length,
         retryEligible: retryEligibleCount,
         attemptsMadeToday: callsToday,
+        emailsSentToday: emailsToday,
       },
       dailyCallTarget: req.user!.dailyCallTarget || null,
     });
@@ -359,6 +362,182 @@ export async function registerRoutes(
       note: note.trim(),
     });
     res.status(201).json(created);
+  });
+
+  app.get("/api/leads/:id/emails", requireAuth, async (req, res) => {
+    const emails = await storage.getEmailLogsByLeadId(parseInt(req.params.id));
+    res.json(emails);
+  });
+
+  app.get("/api/leads/:id/email-eligibility", requireAuth, async (req, res) => {
+    const leadId = parseInt(req.params.id);
+    const lead = await storage.getLeadById(leadId);
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+    const callLogs = await storage.getCallLogsByLeadId(leadId);
+    const hasCallLog = callLogs.length > 0;
+    const hasConfirmedEmail = !!lead.confirmedEmail?.trim();
+    const hasAnyEmail = hasConfirmedEmail || !!lead.scrapedEmail?.trim();
+    const hasSendInfoEmail = await storage.hasEmailLogForLead(leadId, "SEND_INFO");
+    const maxRetryStr = await storage.getSetting("max_retry_attempts");
+    const maxRetry = parseInt(maxRetryStr || "3");
+    const maxedRetries = lead.attemptCount >= maxRetry;
+
+    res.json({
+      sendInfo: {
+        eligible: hasCallLog && hasConfirmedEmail && !lead.unreachable,
+        reasons: [
+          ...(!hasCallLog ? ["Log a call first"] : []),
+          ...(!hasConfirmedEmail ? ["Add confirmed email first"] : []),
+          ...(lead.unreachable ? ["Lead is unreachable"] : []),
+        ],
+      },
+      followUp: {
+        eligible: hasCallLog && hasConfirmedEmail && hasSendInfoEmail && !lead.unreachable,
+        reasons: [
+          ...(!hasCallLog ? ["Log a call first"] : []),
+          ...(!hasConfirmedEmail ? ["Add confirmed email first"] : []),
+          ...(!hasSendInfoEmail ? ["Send initial info email first"] : []),
+          ...(lead.unreachable ? ["Lead is unreachable"] : []),
+        ],
+      },
+      unreachableOutreach: {
+        eligible: (lead.unreachable || maxedRetries) && hasAnyEmail,
+        reasons: [
+          ...(!lead.unreachable && !maxedRetries ? ["Lead is not unreachable or max retries not reached"] : []),
+          ...(!hasAnyEmail ? ["No email address available"] : []),
+        ],
+      },
+    });
+  });
+
+  app.post("/api/leads/:id/email/send", requireAuth, async (req, res) => {
+    const leadId = parseInt(req.params.id);
+    const lead = await storage.getLeadById(leadId);
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+    const isAdmin = req.user!.role === "admin";
+    const isAssigned = lead.assignedToUserId === req.user!.id;
+    if (!isAdmin && !isAssigned) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    const { templateType } = req.body;
+    if (!templateType || !(emailTemplateTypeEnum as readonly string[]).includes(templateType)) {
+      return res.status(400).json({ message: "Invalid template type" });
+    }
+
+    const typedTemplate = templateType as EmailTemplateType;
+
+    const callLogsList = await storage.getCallLogsByLeadId(leadId);
+    const hasCallLog = callLogsList.length > 0;
+    const hasConfirmedEmail = !!lead.confirmedEmail?.trim();
+    const hasAnyEmail = hasConfirmedEmail || !!lead.scrapedEmail?.trim();
+    const maxRetryStr = await storage.getSetting("max_retry_attempts");
+    const maxRetry = parseInt(maxRetryStr || "3");
+
+    if (typedTemplate === "SEND_INFO") {
+      if (!hasCallLog) return res.status(400).json({ message: "Log a call before sending info email" });
+      if (!hasConfirmedEmail) return res.status(400).json({ message: "Confirmed email required" });
+      if (lead.unreachable) return res.status(400).json({ message: "Lead is unreachable" });
+    } else if (typedTemplate === "FOLLOW_UP") {
+      if (!hasCallLog) return res.status(400).json({ message: "Log a call before sending follow-up" });
+      if (!hasConfirmedEmail) return res.status(400).json({ message: "Confirmed email required" });
+      const hasSendInfo = await storage.hasEmailLogForLead(leadId, "SEND_INFO");
+      if (!hasSendInfo) return res.status(400).json({ message: "Send initial info email first" });
+      if (lead.unreachable) return res.status(400).json({ message: "Lead is unreachable" });
+    } else if (typedTemplate === "UNREACHABLE_OUTREACH") {
+      const maxedRetries = lead.attemptCount >= maxRetry;
+      if (!lead.unreachable && !maxedRetries) return res.status(400).json({ message: "Lead must be unreachable or max retries reached" });
+      if (!hasAnyEmail) return res.status(400).json({ message: "No email address available" });
+    }
+
+    const toEmail = typedTemplate === "UNREACHABLE_OUTREACH"
+      ? (lead.confirmedEmail?.trim() || lead.scrapedEmail?.trim()!)
+      : lead.confirmedEmail!.trim();
+
+    const { subject, bodyHtml } = buildEmailContent(typedTemplate, lead);
+
+    const sendResult = await sendEmail(toEmail, subject, bodyHtml, lead.leadToken, lead.id);
+
+    const emailLog = await storage.createEmailLog({
+      leadId: lead.id,
+      userId: req.user!.id,
+      templateType: typedTemplate,
+      toEmail,
+      fromEmail: "connect@supplystreamline.com",
+      subject,
+      bodyHtml,
+      sendgridMessageId: sendResult.messageId || null,
+      status: sendResult.success ? (sendResult.mock ? "MOCK_SENT" : "SENT") : "FAILED",
+    });
+
+    if (sendResult.success) {
+      const emailStatusUpdate: any = {
+        emailSentCount: (lead.emailSentCount || 0) + 1,
+        emailLastSentAt: new Date(),
+      };
+      if (lead.statusEmail === "NOT_SENT") {
+        emailStatusUpdate.statusEmail = "SENT";
+      }
+      await storage.updateLead(lead.id, emailStatusUpdate);
+    }
+
+    if (!sendResult.success) {
+      return res.status(500).json({ message: sendResult.error || "Failed to send email", emailLog });
+    }
+
+    res.status(201).json(emailLog);
+  });
+
+  app.post("/api/sendgrid/events", async (req, res) => {
+    const events = req.body;
+    if (!Array.isArray(events)) {
+      return res.status(400).json({ message: "Expected array of events" });
+    }
+
+    for (const event of events) {
+      try {
+        const leadToken = event.lead_token || event.custom_args?.lead_token;
+        const sgMessageId = event.sg_message_id;
+        const eventType = event.event;
+
+        let lead: any = null;
+
+        if (leadToken) {
+          lead = await storage.getLeadByToken(leadToken);
+        }
+        if (!lead && sgMessageId) {
+          const emailLog = await storage.getEmailLogByMessageId(sgMessageId);
+          if (emailLog) {
+            lead = await storage.getLeadById(emailLog.leadId);
+          }
+        }
+
+        if (!lead) continue;
+
+        await storage.createEmailEvent({
+          leadId: lead.id,
+          eventType: eventType || "unknown",
+          sgMessageId: sgMessageId || null,
+          timestamp: event.timestamp ? new Date(event.timestamp * 1000) : new Date(),
+          url: event.url || null,
+          raw: event,
+        });
+
+        if (eventType === "open" && lead.statusEmail !== "CLICKED") {
+          await storage.updateLead(lead.id, { statusEmail: "OPENED" });
+        } else if (eventType === "click") {
+          await storage.updateLead(lead.id, { statusEmail: "CLICKED" });
+        } else if (eventType === "bounce" || eventType === "dropped") {
+          await storage.updateLead(lead.id, { statusEmail: "BOUNCED" });
+        }
+      } catch (err) {
+        console.error("[WEBHOOK] Error processing event:", err);
+      }
+    }
+
+    res.status(200).json({ ok: true });
   });
 
   app.get("/api/settings", requireAuth, async (_req, res) => {

@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
-import type { Lead, CallLog, LeadNote, User } from "@shared/schema";
+import type { Lead, CallLog, LeadNote, EmailLog } from "@shared/schema";
 import { callOutcomeEnum } from "@shared/schema";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -12,15 +12,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
   Building2, Phone, Mail, MapPin, Globe, Star, MessageSquare,
-  Clock, Save, Plus, Loader2, ArrowLeft, ExternalLink, PhoneCall
+  Clock, Save, Plus, Loader2, ArrowLeft, ExternalLink, PhoneCall,
+  Send, AlertCircle
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { format } from "date-fns";
+
+interface EmailEligibility {
+  sendInfo: { eligible: boolean; reasons: string[] };
+  followUp: { eligible: boolean; reasons: string[] };
+  unreachableOutreach: { eligible: boolean; reasons: string[] };
+}
 
 export default function LeadDetailPage() {
   const [, params] = useRoute("/leads/:id");
@@ -31,6 +38,8 @@ export default function LeadDetailPage() {
   const { data: lead, isLoading } = useQuery<Lead>({ queryKey: ["/api/leads", leadId], enabled: !!leadId });
   const { data: callLogs } = useQuery<CallLog[]>({ queryKey: ["/api/leads", leadId, "calls"], enabled: !!leadId });
   const { data: notes } = useQuery<LeadNote[]>({ queryKey: ["/api/leads", leadId, "notes"], enabled: !!leadId });
+  const { data: emailLogs } = useQuery<EmailLog[]>({ queryKey: ["/api/leads", leadId, "emails"], enabled: !!leadId });
+  const { data: eligibility } = useQuery<EmailEligibility>({ queryKey: ["/api/leads", leadId, "email-eligibility"], enabled: !!leadId });
 
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
@@ -55,6 +64,7 @@ export default function LeadDetailPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId, "email-eligibility"] });
       toast({ title: "Lead updated" });
     },
     onError: () => toast({ title: "Update failed", variant: "destructive" }),
@@ -82,11 +92,34 @@ export default function LeadDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId, "calls"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId, "email-eligibility"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leads/today"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leads/my"] });
       setCallNotes("");
       setCallDuration("");
       toast({ title: "Call logged" });
+    },
+  });
+
+  const sendEmailMutation = useMutation({
+    mutationFn: async (templateType: string) => {
+      const res = await apiRequest("POST", `/api/leads/${leadId}/email/send`, { templateType });
+      return res.json();
+    },
+    onSuccess: (_, templateType) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId, "emails"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId, "email-eligibility"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/today"] });
+      const labels: Record<string, string> = {
+        SEND_INFO: "Send Info",
+        FOLLOW_UP: "Follow Up",
+        UNREACHABLE_OUTREACH: "Unreachable Outreach",
+      };
+      toast({ title: `${labels[templateType] || templateType} email sent` });
+    },
+    onError: (err: any) => {
+      toast({ title: "Email failed to send", description: err.message, variant: "destructive" });
     },
   });
 
@@ -130,6 +163,9 @@ export default function LeadDetailPage() {
           <h1 className="text-xl font-bold truncate" data-testid="text-lead-company">{lead.companyName}</h1>
           <div className="flex items-center gap-2 flex-wrap mt-1">
             <Badge variant="secondary" className="text-xs">{lead.statusCall.replace(/_/g, " ")}</Badge>
+            {lead.statusEmail !== "NOT_SENT" && (
+              <Badge variant="outline" className="text-xs">{lead.statusEmail.replace(/_/g, " ")}</Badge>
+            )}
             {lead.categoryKeyword && <Badge variant="outline" className="text-xs">{lead.categoryKeyword}</Badge>}
           </div>
         </div>
@@ -139,6 +175,7 @@ export default function LeadDetailPage() {
         <TabsList data-testid="tabs-lead-detail">
           <TabsTrigger value="overview" data-testid="tab-overview">Overview</TabsTrigger>
           <TabsTrigger value="calls" data-testid="tab-calls">Call Logs</TabsTrigger>
+          <TabsTrigger value="emails" data-testid="tab-emails">Emails</TabsTrigger>
           <TabsTrigger value="notes" data-testid="tab-notes">Notes</TabsTrigger>
         </TabsList>
 
@@ -274,6 +311,79 @@ export default function LeadDetailPage() {
           )}
         </TabsContent>
 
+        <TabsContent value="emails" className="space-y-4 mt-4">
+          {canEdit && (
+            <Card>
+              <CardHeader className="pb-3">
+                <h3 className="font-semibold flex items-center gap-2"><Mail className="h-4 w-4" /> Send Email</h3>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <EmailButton
+                    label="Send Info"
+                    eligible={eligibility?.sendInfo.eligible ?? false}
+                    reasons={eligibility?.sendInfo.reasons ?? []}
+                    isPending={sendEmailMutation.isPending}
+                    onClick={() => sendEmailMutation.mutate("SEND_INFO")}
+                    testId="button-email-send-info"
+                  />
+                  <EmailButton
+                    label="Follow Up"
+                    eligible={eligibility?.followUp.eligible ?? false}
+                    reasons={eligibility?.followUp.reasons ?? []}
+                    isPending={sendEmailMutation.isPending}
+                    onClick={() => sendEmailMutation.mutate("FOLLOW_UP")}
+                    testId="button-email-follow-up"
+                  />
+                  <EmailButton
+                    label="Unreachable Outreach"
+                    eligible={eligibility?.unreachableOutreach.eligible ?? false}
+                    reasons={eligibility?.unreachableOutreach.reasons ?? []}
+                    isPending={sendEmailMutation.isPending}
+                    onClick={() => sendEmailMutation.mutate("UNREACHABLE_OUTREACH")}
+                    testId="button-email-unreachable"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {(emailLogs ?? []).length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center">
+                <Mail className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">No emails sent yet</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {(emailLogs ?? []).map((email) => (
+                <Card key={email.id} data-testid={`card-email-${email.id}`}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3 flex-wrap">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
+                        <Send className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="outline" className="text-xs">{email.templateType.replace(/_/g, " ")}</Badge>
+                          <Badge variant={email.status === "FAILED" ? "destructive" : "secondary"} className="text-xs">
+                            {email.status}
+                          </Badge>
+                        </div>
+                        <p className="text-sm mt-1 truncate">{email.subject}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          To: {email.toEmail} &middot; {format(new Date(email.createdAt), "MMM d, yyyy h:mm a")}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </TabsContent>
+
         <TabsContent value="notes" className="space-y-4 mt-4">
           {canEdit && (
             <Card>
@@ -312,6 +422,44 @@ export default function LeadDetailPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function EmailButton({ label, eligible, reasons, isPending, onClick, testId }: {
+  label: string;
+  eligible: boolean;
+  reasons: string[];
+  isPending: boolean;
+  onClick: () => void;
+  testId: string;
+}) {
+  if (eligible) {
+    return (
+      <Button size="sm" onClick={onClick} disabled={isPending} data-testid={testId}>
+        {isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-4 w-4 mr-1" />}
+        {label}
+      </Button>
+    );
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span>
+          <Button size="sm" disabled data-testid={testId}>
+            <AlertCircle className="h-4 w-4 mr-1" />
+            {label}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        <ul className="text-xs space-y-1">
+          {reasons.map((r, i) => (
+            <li key={i}>{r}</li>
+          ))}
+        </ul>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

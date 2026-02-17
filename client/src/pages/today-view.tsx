@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { CallModal } from "@/components/call-modal";
 import {
   Phone, Building2, MapPin, PhoneCall, RotateCcw, CheckCircle2,
-  Target, Clock, Zap, AlertTriangle, Activity
+  Target, Clock, Zap, AlertTriangle, Activity, Mail
 } from "lucide-react";
 
 interface TodayData {
@@ -23,6 +23,7 @@ interface TodayData {
     totalAssigned: number;
     retryEligible: number;
     attemptsMadeToday: number;
+    emailsSentToday: number;
   };
   dailyCallTarget: number | null;
 }
@@ -95,13 +96,13 @@ export default function TodayViewPage() {
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {[1, 2, 3].map((i) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          {[1, 2, 3, 4].map((i) => (
             <Card key={i}><CardContent className="p-4"><Skeleton className="h-16 w-full" /></CardContent></Card>
           ))}
         </div>
       ) : counters && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
@@ -137,6 +138,19 @@ export default function TodayViewPage() {
                 <div>
                   <p className="text-2xl font-bold" data-testid="text-attempts-today">{counters.attemptsMadeToday}</p>
                   <p className="text-xs text-muted-foreground">Attempts Today</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
+                  <Mail className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold" data-testid="text-emails-today">{counters.emailsSentToday}</p>
+                  <p className="text-xs text-muted-foreground">Emails Sent Today</p>
                 </div>
               </div>
             </CardContent>

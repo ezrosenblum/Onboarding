@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { eq, and, isNull, ilike, sql, desc, asc, lte, gte } from "drizzle-orm";
-import { users, leads, callLogs, leadNotes, systemSettings } from "@shared/schema";
-import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, SystemSetting } from "@shared/schema";
+import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, systemSettings } from "@shared/schema";
+import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, SystemSetting } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
 export interface IStorage {
@@ -31,6 +31,15 @@ export interface IStorage {
 
   createLeadNote(data: InsertLeadNote): Promise<LeadNote>;
   getNotesByLeadId(leadId: number): Promise<LeadNote[]>;
+
+  createEmailLog(data: InsertEmailLog): Promise<EmailLog>;
+  getEmailLogsByLeadId(leadId: number): Promise<EmailLog[]>;
+  getEmailLogByMessageId(messageId: string): Promise<EmailLog | undefined>;
+  getEmailsSentTodayByUserId(userId: number): Promise<number>;
+  hasEmailLogForLead(leadId: number, templateType: string): Promise<boolean>;
+
+  createEmailEvent(data: InsertEmailEvent): Promise<EmailEvent>;
+  getLeadByToken(token: string): Promise<Lead | undefined>;
 
   getUserCount(): Promise<number>;
 
@@ -233,6 +242,53 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(leadNotes)
       .where(eq(leadNotes.leadId, leadId))
       .orderBy(desc(leadNotes.createdAt));
+  }
+
+  async createEmailLog(data: InsertEmailLog): Promise<EmailLog> {
+    const [log] = await db.insert(emailLogs).values(data).returning();
+    return log;
+  }
+
+  async getEmailLogsByLeadId(leadId: number): Promise<EmailLog[]> {
+    return db.select().from(emailLogs)
+      .where(eq(emailLogs.leadId, leadId))
+      .orderBy(desc(emailLogs.createdAt));
+  }
+
+  async getEmailLogByMessageId(messageId: string): Promise<EmailLog | undefined> {
+    const [log] = await db.select().from(emailLogs)
+      .where(eq(emailLogs.sendgridMessageId, messageId));
+    return log;
+  }
+
+  async getEmailsSentTodayByUserId(userId: number): Promise<number> {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const result = await db.select({ count: sql<number>`count(*)` }).from(emailLogs)
+      .where(and(
+        eq(emailLogs.userId, userId),
+        gte(emailLogs.createdAt, todayStart)
+      ));
+    return Number(result[0].count);
+  }
+
+  async hasEmailLogForLead(leadId: number, templateType: string): Promise<boolean> {
+    const result = await db.select({ count: sql<number>`count(*)` }).from(emailLogs)
+      .where(and(
+        eq(emailLogs.leadId, leadId),
+        eq(emailLogs.templateType, templateType as any)
+      ));
+    return Number(result[0].count) > 0;
+  }
+
+  async createEmailEvent(data: InsertEmailEvent): Promise<EmailEvent> {
+    const [event] = await db.insert(emailEvents).values(data).returning();
+    return event;
+  }
+
+  async getLeadByToken(token: string): Promise<Lead | undefined> {
+    const [lead] = await db.select().from(leads).where(eq(leads.leadToken, token));
+    return lead;
   }
 
   async getSetting(key: string): Promise<string | undefined> {
