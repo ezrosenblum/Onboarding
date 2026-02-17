@@ -6,7 +6,21 @@ import { z } from "zod";
 export const userRoleEnum = ["admin", "vendor_caller", "buyer_caller"] as const;
 export type UserRole = (typeof userRoleEnum)[number];
 
-export const callStatusEnum = ["NOT_CALLED", "CONTACTED", "VOICEMAIL", "NO_ANSWER", "CALLBACK", "NOT_INTERESTED", "INTERESTED", "SIGNED_UP"] as const;
+export const callOutcomeEnum = [
+  "NO_ANSWER",
+  "VOICEMAIL",
+  "GATEKEEPER",
+  "CALL_DROPPED",
+  "SPOKE_NOT_INTERESTED",
+  "SPOKE_SEND_INFO",
+  "SPOKE_FOLLOW_UP",
+  "SPOKE_INTERESTED",
+] as const;
+export type CallOutcome = (typeof callOutcomeEnum)[number];
+
+export const retryOutcomes: readonly CallOutcome[] = ["NO_ANSWER", "VOICEMAIL", "GATEKEEPER", "CALL_DROPPED"] as const;
+
+export const callStatusEnum = ["NOT_CALLED", ...callOutcomeEnum] as const;
 export type CallStatus = (typeof callStatusEnum)[number];
 
 export const emailStatusEnum = ["NOT_SENT", "SENT", "BOUNCED", "REPLIED"] as const;
@@ -56,6 +70,7 @@ export const leads = pgTable("leads", {
   attemptCount: integer("attempt_count").notNull().default(0),
   unreachable: boolean("unreachable").notNull().default(false),
   bestTimeToCall: text("best_time_to_call"),
+  retryNextEligibleAt: timestamp("retry_next_eligible_at"),
   assignedToUserId: integer("assigned_to_user_id").references(() => users.id),
   assignedAt: timestamp("assigned_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -71,7 +86,7 @@ export const callLogs = pgTable("call_logs", {
   leadId: integer("lead_id").notNull().references(() => leads.id),
   userId: integer("user_id").notNull().references(() => users.id),
   calledAt: timestamp("called_at").defaultNow().notNull(),
-  outcome: text("outcome").notNull(),
+  outcome: text("outcome").notNull().$type<CallOutcome>(),
   durationSeconds: integer("duration_seconds"),
   notes: text("notes"),
   withinBadTimingWindow: boolean("within_bad_timing_window").notNull().default(false),
@@ -84,6 +99,11 @@ export const leadNotes = pgTable("lead_notes", {
   userId: integer("user_id").notNull().references(() => users.id),
   note: text("note").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const systemSettings = pgTable("system_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, passwordHash: true }).extend({
@@ -103,6 +123,8 @@ export type CallLog = typeof callLogs.$inferSelect;
 export const insertLeadNoteSchema = createInsertSchema(leadNotes).omit({ id: true, createdAt: true });
 export type InsertLeadNote = z.infer<typeof insertLeadNoteSchema>;
 export type LeadNote = typeof leadNotes.$inferSelect;
+
+export type SystemSetting = typeof systemSettings.$inferSelect;
 
 export const loginSchema = z.object({
   email: z.string().email("Invalid email"),

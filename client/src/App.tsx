@@ -12,6 +12,7 @@ import LoginPage from "@/pages/login";
 import MyLeadsPage from "@/pages/my-leads";
 import AllLeadsPage from "@/pages/all-leads";
 import LeadDetailPage from "@/pages/lead-detail";
+import TodayViewPage from "@/pages/today-view";
 import UploadLeadsPage from "@/pages/admin/upload-leads";
 import AssignBatchPage from "@/pages/admin/assign-batch";
 import ManageUsersPage from "@/pages/admin/manage-users";
@@ -35,7 +36,9 @@ function AppRouter() {
 
   return (
     <Switch>
-      <Route path="/" component={isAdmin ? AllLeadsPage : MyLeadsPage} />
+      <Route path="/" component={isAdmin ? AllLeadsPage : TodayViewPage} />
+      <Route path="/today" component={TodayViewPage} />
+      <Route path="/my-leads" component={MyLeadsPage} />
       <Route path="/leads" component={AllLeadsPage} />
       <Route path="/leads/:id" component={LeadDetailPage} />
       <Route path="/admin/upload">{() => <AdminRoute component={UploadLeadsPage} />}</Route>

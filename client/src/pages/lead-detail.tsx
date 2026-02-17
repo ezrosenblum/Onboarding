@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import type { Lead, CallLog, LeadNote, User } from "@shared/schema";
-import { callStatusEnum } from "@shared/schema";
+import { callOutcomeEnum } from "@shared/schema";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -37,7 +37,7 @@ export default function LeadDetailPage() {
   const [editBestTime, setEditBestTime] = useState("");
 
   const [newNote, setNewNote] = useState("");
-  const [callOutcome, setCallOutcome] = useState("CONTACTED");
+  const [callOutcome, setCallOutcome] = useState("NO_ANSWER");
   const [callNotes, setCallNotes] = useState("");
   const [callDuration, setCallDuration] = useState("");
 
@@ -82,6 +82,8 @@ export default function LeadDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId, "calls"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/my"] });
       setCallNotes("");
       setCallDuration("");
       toast({ title: "Call logged" });
@@ -217,7 +219,7 @@ export default function LeadDetailPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {callStatusEnum.map((s) => (
+                        {callOutcomeEnum.map((s) => (
                           <SelectItem key={s} value={s}>{s.replace(/_/g, " ")}</SelectItem>
                         ))}
                       </SelectContent>

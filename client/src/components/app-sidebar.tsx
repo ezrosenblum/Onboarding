@@ -1,4 +1,4 @@
-import { Upload, Users, ClipboardList, LayoutDashboard, UserCheck } from "lucide-react";
+import { Upload, Users, ClipboardList, LayoutDashboard, UserCheck, PhoneCall, List } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
 import {
@@ -26,7 +26,8 @@ const adminItems = [
 ];
 
 const callerItems = [
-  { title: "My Assigned", url: "/", icon: LayoutDashboard },
+  { title: "Today's Calls", url: "/", icon: PhoneCall },
+  { title: "My Assigned", url: "/my-leads", icon: List },
   { title: "All Vendor Leads", url: "/leads", icon: ClipboardList },
 ];
 

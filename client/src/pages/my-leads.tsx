@@ -12,10 +12,9 @@ import { useState } from "react";
 function statusColor(status: string) {
   switch (status) {
     case "NOT_CALLED": return "secondary";
-    case "CONTACTED": return "default";
-    case "INTERESTED": return "default";
-    case "SIGNED_UP": return "default";
-    case "NOT_INTERESTED": return "destructive";
+    case "SPOKE_INTERESTED": return "default";
+    case "SPOKE_SEND_INFO": return "default";
+    case "SPOKE_NOT_INTERESTED": return "destructive";
     default: return "outline";
   }
 }

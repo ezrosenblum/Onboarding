@@ -4,9 +4,11 @@ import passport from "passport";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import { storage } from "./storage";
+import { db } from "./db";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
-import { insertUserSchema, loginSchema, callStatusEnum } from "@shared/schema";
-import type { InsertLead } from "@shared/schema";
+import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, callLogs, leads } from "@shared/schema";
+import type { InsertLead, CallOutcome } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -30,6 +32,19 @@ const FIELD_TO_COLUMN: Record<string, keyof InsertLead> = {
   domain: "domain",
 };
 
+function addBusinessDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  let added = 0;
+  while (added < days) {
+    result.setDate(result.getDate() + 1);
+    const dow = result.getDay();
+    if (dow !== 0 && dow !== 6) {
+      added++;
+    }
+  }
+  return result;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -38,7 +53,6 @@ export async function registerRoutes(
 
   await seedAdmin();
 
-  // Auth routes
   app.post("/api/auth/login", (req, res, next) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -67,7 +81,6 @@ export async function registerRoutes(
     res.json(safe);
   });
 
-  // Users
   app.get("/api/users", requireAdmin, async (_req, res) => {
     const users = await storage.getAllUsers();
     res.json(users.map(({ passwordHash, ...u }) => u));
@@ -95,7 +108,6 @@ export async function registerRoutes(
     }
   });
 
-  // Leads
   app.get("/api/leads", requireAuth, async (req, res) => {
     const leads = await storage.getAllLeads("vendor");
     res.json(leads);
@@ -104,6 +116,29 @@ export async function registerRoutes(
   app.get("/api/leads/my", requireAuth, async (req, res) => {
     const leads = await storage.getLeadsByUserId(req.user!.id);
     res.json(leads);
+  });
+
+  app.get("/api/leads/today", requireAuth, async (req, res) => {
+    const userId = req.user!.id;
+    const [newLeads, retryLeads, completedLeads, callsToday, allAssigned] = await Promise.all([
+      storage.getNewLeads(userId),
+      storage.getRetryLeads(userId),
+      storage.getCompletedLeads(userId),
+      storage.getCallLogsTodayByUserId(userId),
+      storage.getLeadsByUserId(userId),
+    ]);
+
+    res.json({
+      newLeads,
+      retryLeads,
+      completedLeads,
+      counters: {
+        totalAssigned: allAssigned.length,
+        retryEligible: retryLeads.length,
+        attemptsMadeToday: callsToday,
+      },
+      dailyCallTarget: req.user!.dailyCallTarget || null,
+    });
   });
 
   app.get("/api/leads/:id", requireAuth, async (req, res) => {
@@ -132,7 +167,6 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  // XLSX Preview
   app.post("/api/leads/preview", requireAdmin, upload.single("file"), (req, res) => {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
@@ -147,7 +181,6 @@ export async function registerRoutes(
     }
   });
 
-  // XLSX Import
   app.post("/api/leads/import", requireAdmin, upload.single("file"), async (req, res) => {
     if (!req.file) return res.status(400).json({ message: "No file uploaded" });
 
@@ -215,7 +248,6 @@ export async function registerRoutes(
     }
   });
 
-  // Assignment
   app.post("/api/leads/assign", requireAdmin, async (req, res) => {
     const { callerId, count, stateFilter, categoryFilter } = req.body;
     if (!callerId || !count) return res.status(400).json({ message: "callerId and count are required" });
@@ -228,7 +260,6 @@ export async function registerRoutes(
     res.json({ assigned });
   });
 
-  // Call logs
   app.get("/api/leads/:id/calls", requireAuth, async (req, res) => {
     const logs = await storage.getCallLogsByLeadId(parseInt(req.params.id));
     res.json(logs);
@@ -247,27 +278,57 @@ export async function registerRoutes(
 
     const { outcome, notes, durationSeconds } = req.body;
     if (!outcome) return res.status(400).json({ message: "Outcome is required" });
-    if (!callStatusEnum.includes(outcome)) return res.status(400).json({ message: "Invalid outcome" });
+    if (!(callOutcomeEnum as readonly string[]).includes(outcome)) {
+      return res.status(400).json({ message: "Invalid outcome" });
+    }
 
-    const log = await storage.createCallLog({
-      leadId,
-      userId: req.user!.id,
-      calledAt: new Date(),
-      outcome,
-      notes: notes || null,
-      durationSeconds: durationSeconds || null,
-      withinBadTimingWindow: false,
-    });
+    const typedOutcome = outcome as CallOutcome;
 
-    await storage.updateLead(leadId, {
-      statusCall: outcome as any,
-      attemptCount: (lead.attemptCount || 0) + 1,
+    const newAttemptCount = (lead.attemptCount || 0) + 1;
+
+    const maxRetryStr = await storage.getSetting("max_retry_attempts");
+    const retryDelayStr = await storage.getSetting("retry_delay_business_days");
+    const maxRetry = parseInt(maxRetryStr || "3");
+    const retryDelay = parseInt(retryDelayStr || "2");
+
+    const leadUpdate: any = {
+      statusCall: typedOutcome,
+      attemptCount: newAttemptCount,
+    };
+
+    if (typedOutcome === "SPOKE_NOT_INTERESTED") {
+      leadUpdate.unreachable = true;
+      leadUpdate.retryNextEligibleAt = null;
+    } else if ((retryOutcomes as readonly string[]).includes(typedOutcome)) {
+      if (newAttemptCount >= maxRetry) {
+        leadUpdate.unreachable = true;
+        leadUpdate.retryNextEligibleAt = null;
+      } else {
+        leadUpdate.retryNextEligibleAt = addBusinessDays(new Date(), retryDelay);
+      }
+    } else {
+      leadUpdate.retryNextEligibleAt = null;
+    }
+
+    const log = await db.transaction(async (tx) => {
+      const [callLog] = await tx.insert(callLogs).values({
+        leadId,
+        userId: req.user!.id,
+        calledAt: new Date(),
+        outcome: typedOutcome,
+        notes: notes || null,
+        durationSeconds: durationSeconds || null,
+        withinBadTimingWindow: false,
+      }).returning();
+
+      await tx.update(leads).set(leadUpdate).where(eq(leads.id, leadId));
+
+      return callLog;
     });
 
     res.status(201).json(log);
   });
 
-  // Notes
   app.get("/api/leads/:id/notes", requireAuth, async (req, res) => {
     const notes = await storage.getNotesByLeadId(parseInt(req.params.id));
     res.json(notes);
@@ -293,6 +354,17 @@ export async function registerRoutes(
       note: note.trim(),
     });
     res.status(201).json(created);
+  });
+
+  app.get("/api/settings", requireAuth, async (_req, res) => {
+    const [maxRetry, retryDelay] = await Promise.all([
+      storage.getSetting("max_retry_attempts"),
+      storage.getSetting("retry_delay_business_days"),
+    ]);
+    res.json({
+      maxRetryAttempts: parseInt(maxRetry || "3"),
+      retryDelayBusinessDays: parseInt(retryDelay || "2"),
+    });
   });
 
   return httpServer;

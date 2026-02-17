@@ -1,7 +1,7 @@
 import { db } from "./db";
-import { eq, and, isNull, ilike, sql, desc, asc } from "drizzle-orm";
-import { users, leads, callLogs, leadNotes } from "@shared/schema";
-import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote } from "@shared/schema";
+import { eq, and, isNull, ilike, sql, desc, asc, lte, gte } from "drizzle-orm";
+import { users, leads, callLogs, leadNotes, systemSettings } from "@shared/schema";
+import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, SystemSetting } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
 export interface IStorage {
@@ -18,13 +18,21 @@ export interface IStorage {
   updateLead(id: number, data: Partial<Lead>): Promise<Lead | undefined>;
   assignLeads(callerId: number, count: number, filters?: { state?: string; category?: string }): Promise<number>;
 
+  getNewLeads(userId: number): Promise<Lead[]>;
+  getRetryLeads(userId: number): Promise<Lead[]>;
+  getCompletedLeads(userId: number): Promise<Lead[]>;
+
   createCallLog(data: InsertCallLog): Promise<CallLog>;
   getCallLogsByLeadId(leadId: number): Promise<CallLog[]>;
+  getCallLogsTodayByUserId(userId: number): Promise<number>;
+  getLastCallLogForLead(leadId: number): Promise<CallLog | undefined>;
 
   createLeadNote(data: InsertLeadNote): Promise<LeadNote>;
   getNotesByLeadId(leadId: number): Promise<LeadNote[]>;
 
   getUserCount(): Promise<number>;
+
+  getSetting(key: string): Promise<string | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -124,6 +132,39 @@ export class DatabaseStorage implements IStorage {
     return ids.length;
   }
 
+  async getNewLeads(userId: number): Promise<Lead[]> {
+    return db.select().from(leads)
+      .where(and(
+        eq(leads.assignedToUserId, userId),
+        eq(leads.statusCall, "NOT_CALLED"),
+        eq(leads.unreachable, false),
+        sql`${leads.statusSignup} != 'SIGNED_UP'`
+      ))
+      .orderBy(asc(leads.createdAt));
+  }
+
+  async getRetryLeads(userId: number): Promise<Lead[]> {
+    const now = new Date();
+    return db.select().from(leads)
+      .where(and(
+        eq(leads.assignedToUserId, userId),
+        eq(leads.unreachable, false),
+        sql`${leads.statusCall} != 'NOT_CALLED'`,
+        sql`${leads.statusSignup} != 'SIGNED_UP'`,
+        lte(leads.retryNextEligibleAt, now)
+      ))
+      .orderBy(asc(leads.retryNextEligibleAt));
+  }
+
+  async getCompletedLeads(userId: number): Promise<Lead[]> {
+    return db.select().from(leads)
+      .where(and(
+        eq(leads.assignedToUserId, userId),
+        sql`(${leads.statusSignup} = 'SIGNED_UP' OR ${leads.unreachable} = true OR ${leads.statusCall} IN ('SPOKE_NOT_INTERESTED', 'SPOKE_INTERESTED', 'SPOKE_SEND_INFO', 'SPOKE_FOLLOW_UP'))`
+      ))
+      .orderBy(desc(leads.createdAt));
+  }
+
   async createCallLog(data: InsertCallLog): Promise<CallLog> {
     const [log] = await db.insert(callLogs).values(data).returning();
     return log;
@@ -135,6 +176,25 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(callLogs.calledAt));
   }
 
+  async getCallLogsTodayByUserId(userId: number): Promise<number> {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const result = await db.select({ count: sql<number>`count(*)` }).from(callLogs)
+      .where(and(
+        eq(callLogs.userId, userId),
+        gte(callLogs.calledAt, todayStart)
+      ));
+    return Number(result[0].count);
+  }
+
+  async getLastCallLogForLead(leadId: number): Promise<CallLog | undefined> {
+    const [log] = await db.select().from(callLogs)
+      .where(eq(callLogs.leadId, leadId))
+      .orderBy(desc(callLogs.calledAt))
+      .limit(1);
+    return log;
+  }
+
   async createLeadNote(data: InsertLeadNote): Promise<LeadNote> {
     const [note] = await db.insert(leadNotes).values(data).returning();
     return note;
@@ -144,6 +204,11 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(leadNotes)
       .where(eq(leadNotes.leadId, leadId))
       .orderBy(desc(leadNotes.createdAt));
+  }
+
+  async getSetting(key: string): Promise<string | undefined> {
+    const [row] = await db.select().from(systemSettings).where(eq(systemSettings.key, key));
+    return row?.value;
   }
 }
 

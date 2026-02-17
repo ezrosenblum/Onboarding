@@ -1,0 +1,205 @@
+We are now building Stage 2 of the SupplyStreamline Onboarding system.
+
+Do NOT touch Stage 1 functionality. Extend it cleanly.
+
+Stage 2 Scope: Calling Engine + Retry Logic (No Twilio yet)
+
+We are NOT integrating Twilio yet. Calls are logged manually via UI for now.
+
+1️⃣ Fixed Call Outcomes
+
+Create a fixed core outcome list in code (not editable for now):
+
+Core outcomes:
+
+NO_ANSWER
+
+VOICEMAIL
+
+GATEKEEPER
+
+CALL_DROPPED
+
+SPOKE_NOT_INTERESTED
+
+SPOKE_SEND_INFO
+
+SPOKE_FOLLOW_UP
+
+SPOKE_INTERESTED
+
+These must be stored consistently (enum or controlled values).
+
+Optional custom outcomes can be added later — ignore for now.
+
+2️⃣ Attempt Tracking
+
+When a call log is created:
+
+Increment lead.attempt_count by 1.
+
+Update lead.status_call accordingly.
+
+Rules:
+If outcome is:
+
+NO_ANSWER
+
+VOICEMAIL
+
+GATEKEEPER
+
+CALL_DROPPED
+
+→ This counts as a retry attempt.
+
+If outcome is:
+
+SPOKE_NOT_INTERESTED
+→ lead.unreachable = true
+
+If outcome is:
+
+SPOKE_SEND_INFO or SPOKE_FOLLOW_UP or SPOKE_INTERESTED
+→ do NOT mark unreachable.
+
+3️⃣ Retry Logic (Core Engine)
+
+Add to leads table if not present:
+
+retry_next_eligible_at (timestamp nullable)
+
+Rules:
+If outcome is one of the retry types:
+
+If attempt_count < max_retry_attempts:
+
+Set retry_next_eligible_at = now + 2 business days
+
+If attempt_count >= max_retry_attempts:
+
+Set unreachable = true
+
+Set retry_next_eligible_at = null
+
+Max retry attempts default: 3
+
+Create a simple system settings table:
+
+key
+
+value
+
+Seed:
+
+max_retry_attempts = 3
+
+retry_delay_business_days = 2
+
+Do NOT build admin UI for editing settings yet — just seed values.
+
+Business day calculation:
+
+Skip Saturday and Sunday.
+
+Basic implementation is fine.
+
+4️⃣ Caller "Today View"
+
+Create a new page for Vendor Caller:
+
+Tabs:
+
+NEW
+
+RETRY
+
+COMPLETED (placeholder for future)
+
+NEW tab:
+
+Leads assigned to user
+
+status_call = NOT_CALLED
+
+unreachable = false
+
+RETRY tab:
+
+Leads assigned to user
+
+retry_next_eligible_at <= now
+
+unreachable = false
+
+Display counters:
+
+Total Assigned
+
+Retry Eligible
+
+Attempts Made Today (count from call_logs today)
+
+Display 80/20 recommendation:
+
+If daily_call_target exists:
+
+Show suggested counts (80% new, 20% retry)
+
+Only informational, no enforcement.
+
+5️⃣ Call Popup Modal
+
+When user clicks "Log Call" on a lead:
+
+Show modal:
+
+Phone (editable)
+
+Outcome dropdown (fixed list)
+
+Notes textarea
+
+Show attempt_count
+
+Show last call time
+
+Placeholder section: "AI Opener Script (coming in Stage 4)"
+
+On submit:
+
+Create call_log
+
+Apply retry logic
+
+Close modal
+
+Refresh lead list
+
+6️⃣ Completed Behavior (prep for later)
+
+If lead.status_signup = SIGNED_UP (future use):
+
+Lead should not appear in NEW or RETRY.
+
+Add placeholder COMPLETED tab (empty for now).
+
+7️⃣ Important
+
+All retry logic and unreachable logic must be enforced server-side, not only UI.
+
+Return:
+
+Updated schema (including retry_next_eligible_at + settings table)
+
+Updated endpoints
+
+Explanation of retry logic implementation
+
+Confirmation business day calculation works
+
+Screenshots of Today View tabs
+
+Do NOT begin Twilio integration.
+
+When finished, wait for architect review.
