@@ -66,11 +66,22 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 - Email logs stored with template type, status, SendGrid message ID
 - Mock mode available when SendGrid API key not configured
 
+### Template Management
+- Admin-only page at `/admin/email-templates`
+- Templates stored in `email_templates` table (pipeline_type + template_type unique)
+- Templates use variable substitution: {{company_name}}, {{contact_email}}, {{caller_name}}, {{signup_link}}, {{city}}, {{state}}
+- Default templates auto-loaded if no DB record exists
+- Restore Default button resets template to hardcoded defaults
+- Email sending pulls latest template from DB at send time (dynamic, not hardcoded)
+
 ### API Endpoints
 - `GET /api/leads/:id/emails` - Get email logs for a lead
 - `GET /api/leads/:id/email-eligibility` - Check which templates can be sent
 - `POST /api/leads/:id/email/send` - Send email (body: { templateType })
 - `POST /api/sendgrid/events` - SendGrid webhook receiver
+- `GET /api/templates?pipeline=vendor` - Get templates for pipeline (admin only)
+- `POST /api/templates` - Save/update a template (admin only)
+- `POST /api/templates/restore-default` - Restore template to default (admin only)
 
 ## Seed Data
 - Default admin: admin@supplystreamline.com / admin123
@@ -80,7 +91,7 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 ## Database
 - PostgreSQL with Drizzle ORM
 - Push schema: `npm run db:push`
-- Tables: users, leads, call_logs, lead_notes, email_logs, email_events, system_settings
+- Tables: users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, system_settings
 - Unique index: (pipeline_type, place_id) WHERE place_id IS NOT NULL
 
 ## Running

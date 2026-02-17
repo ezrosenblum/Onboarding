@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { eq, and, isNull, ilike, sql, desc, asc, lte, gte } from "drizzle-orm";
-import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, systemSettings } from "@shared/schema";
-import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, SystemSetting } from "@shared/schema";
+import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, systemSettings } from "@shared/schema";
+import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, SystemSetting } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
 export interface IStorage {
@@ -40,6 +40,10 @@ export interface IStorage {
 
   createEmailEvent(data: InsertEmailEvent): Promise<EmailEvent>;
   getLeadByToken(token: string): Promise<Lead | undefined>;
+
+  getEmailTemplates(pipelineType: string): Promise<EmailTemplate[]>;
+  getEmailTemplate(pipelineType: string, templateType: string): Promise<EmailTemplate | undefined>;
+  upsertEmailTemplate(data: InsertEmailTemplate): Promise<EmailTemplate>;
 
   getUserCount(): Promise<number>;
 
@@ -289,6 +293,33 @@ export class DatabaseStorage implements IStorage {
   async getLeadByToken(token: string): Promise<Lead | undefined> {
     const [lead] = await db.select().from(leads).where(eq(leads.leadToken, token));
     return lead;
+  }
+
+  async getEmailTemplates(pipelineType: string): Promise<EmailTemplate[]> {
+    return db.select().from(emailTemplates)
+      .where(eq(emailTemplates.pipelineType, pipelineType as any));
+  }
+
+  async getEmailTemplate(pipelineType: string, templateType: string): Promise<EmailTemplate | undefined> {
+    const [template] = await db.select().from(emailTemplates)
+      .where(and(
+        eq(emailTemplates.pipelineType, pipelineType as any),
+        eq(emailTemplates.templateType, templateType as any)
+      ));
+    return template;
+  }
+
+  async upsertEmailTemplate(data: InsertEmailTemplate): Promise<EmailTemplate> {
+    const existing = await this.getEmailTemplate(data.pipelineType as string, data.templateType as string);
+    if (existing) {
+      const [updated] = await db.update(emailTemplates)
+        .set({ subject: data.subject, bodyHtml: data.bodyHtml, updatedAt: new Date() })
+        .where(eq(emailTemplates.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(emailTemplates).values(data).returning();
+    return created;
   }
 
   async getSetting(key: string): Promise<string | undefined> {

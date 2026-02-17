@@ -16,6 +16,7 @@ import TodayViewPage from "@/pages/today-view";
 import UploadLeadsPage from "@/pages/admin/upload-leads";
 import AssignBatchPage from "@/pages/admin/assign-batch";
 import ManageUsersPage from "@/pages/admin/manage-users";
+import EmailTemplatesPage from "@/pages/admin/email-templates";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
@@ -44,6 +45,7 @@ function AppRouter() {
       <Route path="/admin/upload">{() => <AdminRoute component={UploadLeadsPage} />}</Route>
       <Route path="/admin/assign">{() => <AdminRoute component={AssignBatchPage} />}</Route>
       <Route path="/admin/users">{() => <AdminRoute component={ManageUsersPage} />}</Route>
+      <Route path="/admin/email-templates">{() => <AdminRoute component={EmailTemplatesPage} />}</Route>
       <Route component={NotFound} />
     </Switch>
   );

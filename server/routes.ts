@@ -9,7 +9,7 @@ import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, emailTemplateTypeEnum, callLogs, leads } from "@shared/schema";
 import type { InsertLead, CallOutcome, EmailTemplateType } from "@shared/schema";
 import { eq } from "drizzle-orm";
-import { buildEmailContent, sendEmail } from "./email-service";
+import { buildEmailContent, sendEmail, getDefaultTemplates } from "./email-service";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -456,7 +456,7 @@ export async function registerRoutes(
       ? (lead.confirmedEmail?.trim() || lead.scrapedEmail?.trim()!)
       : lead.confirmedEmail!.trim();
 
-    const { subject, bodyHtml } = buildEmailContent(typedTemplate, lead);
+    const { subject, bodyHtml } = await buildEmailContent(typedTemplate, lead, req.user!.name);
 
     const sendResult = await sendEmail(toEmail, subject, bodyHtml, lead.leadToken, lead.id);
 
@@ -538,6 +538,64 @@ export async function registerRoutes(
     }
 
     res.status(200).json({ ok: true });
+  });
+
+  app.get("/api/templates", requireAdmin, async (req, res) => {
+    const pipeline = (req.query.pipeline as string) || "vendor";
+    const templates = await storage.getEmailTemplates(pipeline);
+    const defaults = getDefaultTemplates();
+    const result = (["SEND_INFO", "FOLLOW_UP", "UNREACHABLE_OUTREACH"] as const).map((type) => {
+      const saved = templates.find((t) => t.templateType === type);
+      if (saved) {
+        return { ...saved, isDefault: false };
+      }
+      return {
+        id: null,
+        pipelineType: pipeline,
+        templateType: type,
+        subject: defaults[type].subject,
+        bodyHtml: defaults[type].bodyHtml,
+        updatedAt: null,
+        isDefault: true,
+      };
+    });
+    res.json(result);
+  });
+
+  app.post("/api/templates", requireAdmin, async (req, res) => {
+    const { pipelineType, templateType, subject, bodyHtml } = req.body;
+    if (!pipelineType || !templateType || !subject || !bodyHtml) {
+      return res.status(400).json({ message: "pipelineType, templateType, subject, bodyHtml are required" });
+    }
+    if (!(emailTemplateTypeEnum as readonly string[]).includes(templateType)) {
+      return res.status(400).json({ message: "Invalid template type" });
+    }
+    const template = await storage.upsertEmailTemplate({
+      pipelineType,
+      templateType,
+      subject,
+      bodyHtml,
+    });
+    res.json(template);
+  });
+
+  app.post("/api/templates/restore-default", requireAdmin, async (req, res) => {
+    const { pipelineType, templateType } = req.body;
+    if (!pipelineType || !templateType) {
+      return res.status(400).json({ message: "pipelineType and templateType are required" });
+    }
+    const defaults = getDefaultTemplates();
+    if (!(templateType in defaults)) {
+      return res.status(400).json({ message: "Invalid template type" });
+    }
+    const defaultContent = defaults[templateType as EmailTemplateType];
+    const template = await storage.upsertEmailTemplate({
+      pipelineType,
+      templateType,
+      subject: defaultContent.subject,
+      bodyHtml: defaultContent.bodyHtml,
+    });
+    res.json(template);
   });
 
   app.get("/api/settings", requireAuth, async (_req, res) => {

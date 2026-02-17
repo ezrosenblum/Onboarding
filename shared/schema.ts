@@ -133,6 +133,17 @@ export const emailEvents = pgTable("email_events", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const emailTemplates = pgTable("email_templates", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  pipelineType: text("pipeline_type").notNull().$type<PipelineType>().default("vendor"),
+  templateType: text("template_type").notNull().$type<EmailTemplateType>(),
+  subject: text("subject").notNull(),
+  bodyHtml: text("body_html").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("email_templates_pipeline_template_unique").on(table.pipelineType, table.templateType),
+]);
+
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
@@ -163,6 +174,10 @@ export type EmailLog = typeof emailLogs.$inferSelect;
 export const insertEmailEventSchema = createInsertSchema(emailEvents).omit({ id: true, createdAt: true });
 export type InsertEmailEvent = z.infer<typeof insertEmailEventSchema>;
 export type EmailEvent = typeof emailEvents.$inferSelect;
+
+export const insertEmailTemplateSchema = createInsertSchema(emailTemplates).omit({ id: true, updatedAt: true });
+export type InsertEmailTemplate = z.infer<typeof insertEmailTemplateSchema>;
+export type EmailTemplate = typeof emailTemplates.$inferSelect;
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
 
