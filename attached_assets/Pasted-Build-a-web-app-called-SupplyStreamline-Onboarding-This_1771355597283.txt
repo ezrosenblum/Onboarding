@@ -1,0 +1,243 @@
+Build a web app called SupplyStreamline Onboarding. This app is an internal calling + email + tracking system used to onboard vendors and buyers, but we will build Vendor pipeline first and then duplicate it for Buyer once Vendor is working. Keep the code structured so Buyer can be duplicated with minimal changes (same screens/logic, different prompts/templates).
+
+Tech choices
+
+Use Postgres database.
+
+Use a modern stack you recommend for Replit (e.g., Next.js + API routes + Prisma/Drizzle). Keep it simple and reliable.
+
+Role-based authentication with separate logins.
+
+Roles (3)
+
+Admin: sees everything, config, uploads, assigns batches, dashboards later.
+
+Vendor Caller: only sees vendor pipeline workspace, their assigned leads, their notes/calls/emails.
+
+Buyer Caller: will be added later by duplicating vendor pipeline.
+
+For Stage 1, implement Admin + Vendor Caller fully. Add Buyer role scaffolding (role enum + route protection) but you do NOT need to build Buyer UI yet.
+
+Stage 1 scope (MVP foundation)
+A) Authentication + Role-based access
+
+Login screen (email + password).
+
+Admin can create users (name, email, role, password).
+
+Protect routes based on role.
+
+Vendor Caller can’t access admin screens.
+
+B) Database tables (Stage 1)
+
+Implement these tables (you can refine names/fields but keep the intent):
+
+users
+
+id, name, email(unique), password_hash, role (admin/vendor_caller/buyer_caller), daily_call_target (int, nullable), created_at
+
+leads
+Vendor pipeline only for now:
+
+id
+
+pipeline_type (vendor/buyer) -> for now only vendor used
+
+source_file (text)
+
+place_id (text, indexed, used for dedupe)
+
+cid (text, optional)
+
+company_name (text)
+
+full_address (text)
+
+city, state, zip (text)
+
+timezone (text, optional)
+
+phone (text, editable)
+
+scraped_email (text, optional)
+
+confirmed_email (text, optional)
+
+website (text, optional)
+
+domain (text, optional)
+
+category_keyword (text, optional)
+
+gmb_url (text, optional)
+
+rating (numeric/float optional)
+
+reviews_count (int optional)
+
+hours_raw (text optional) // store the raw “Hours” string from the scrape for now
+
+status_call (enum/text default “NOT_CALLED”)
+
+status_email (enum/text default “NOT_SENT”)
+
+status_signup (enum/text default “NOT_SIGNED_UP”)
+
+attempt_count (int default 0)
+
+unreachable (bool default false)
+
+best_time_to_call (text optional)
+
+assigned_to_user_id (fk users, nullable)
+
+assigned_at (timestamp nullable)
+
+created_at
+
+call_logs
+
+id
+
+lead_id (fk)
+
+user_id (fk)
+
+called_at (timestamp)
+
+outcome (text) // will be fixed list later; for now store string
+
+duration_seconds (int nullable)
+
+notes (text nullable)
+
+within_bad_timing_window (bool default false)
+
+created_at
+
+lead_notes
+
+id
+
+lead_id (fk)
+
+user_id (fk)
+
+note (text)
+
+created_at
+
+(Email tables, AI tables, tracking tables will come in later stages—do NOT implement yet unless needed for basic UI scaffolding.)
+
+C) Upload XLSX (Admin)
+
+Create an Admin page: Upload Leads
+
+Upload an XLSX file (Google Maps scraped leads).
+
+Show a preview of the first ~20 rows.
+
+Provide a simple “field mapping” UI:
+
+Admin selects which spreadsheet columns map to our standard fields (company_name, phone, scraped_email, website, full_address, city, state, zip, place_id, cid, gmb_url, rating, reviews_count, hours_raw, category_keyword, timezone).
+
+Admin can ignore other columns.
+
+Admin selects the pipeline type for the upload (Vendor or Buyer). For Stage 1, allow selecting but only Vendor will be used in caller views.
+
+Import into Postgres.
+
+Dedupe: if place_id already exists for the same pipeline_type, skip or update (choose a safe approach: skip duplicates and report counts).
+
+After import, show a summary: imported count, skipped duplicates count.
+
+D) Lead list + lead detail (Vendor Caller + Admin)
+
+Create a Vendor Leads section:
+
+Admin can view all vendor leads.
+
+Vendor Caller can view:
+
+assigned leads to them
+
+and also unassigned leads (for future “self-pull”, but for Stage 1 just allow viewing “All Vendor Leads” read-only and “My Assigned” editable)
+
+Lead List features (Stage 1):
+
+Search by company name, phone, city, state.
+
+Filters: status_call, assigned/unassigned, has phone, has email, has website.
+
+Sorting: company name, newest imported.
+
+Lead Detail page (Stage 1):
+
+Show the core lead fields.
+
+Allow editing phone, confirmed_email, best_time_to_call.
+
+Tabs:
+
+Overview (fields)
+
+Call Logs (list call logs)
+
+Notes (list notes + add note)
+
+E) Assignment (Admin)
+
+Admin page: Assign Batch
+
+Admin chooses:
+
+caller (vendor caller user)
+
+number of leads (N)
+
+filters: uncontacted only (status_call = NOT_CALLED), optional state/category filter (basic)
+
+Assign by setting assigned_to_user_id + assigned_at for the next N matching leads.
+
+Show result summary.
+
+F) Basic “Today” view (Vendor Caller)
+
+Caller page:
+
+“My Assigned Leads” list
+
+“Retry/Unreachable” can be placeholders for now (don’t implement retry logic yet in Stage 1).
+
+Show count of assigned leads.
+
+UI requirements
+
+Keep UI clean and fast.
+
+Simple navigation sidebar:
+
+Vendor Caller: My Assigned, All Vendor Leads
+
+Admin: Upload Leads, Assign Batch, All Vendor Leads, Users
+
+Use server-side validation and clear error messages.
+
+Seed data / testing
+
+Create an initial Admin user on first run (or a seed script).
+
+Make sure XLSX upload works with typical Google Maps scrape columns.
+
+IMPORTANT
+
+We are building in stages. Stage 1 must be stable: auth, upload+mapping, lead storage, lead views, assignment, call logs + notes tables and UI.
+
+Return:
+
+Working app
+
+Database migrations
+
+Clear instructions in README for running and setting up locally in Replit environment.
