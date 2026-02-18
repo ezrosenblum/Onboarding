@@ -1,208 +1,69 @@
 # SupplyStreamline Onboarding
 
 ## Overview
-Internal calling + email + tracking system for onboarding vendors and buyers. Stage 1 MVP implements the Vendor pipeline with Admin and Vendor Caller roles. Stage 2 adds the calling engine with retry logic. Stage 3 adds outbound email capabilities with SendGrid integration. Stage 4 adds AI Research Engine for personalized call opener scripts. Stage 6 adds signup completion tracking via webhook + admin manual override with metrics dashboard.
+SupplyStreamline is an internal system designed to streamline the onboarding of vendors and buyers through integrated calling, emailing, and tracking functionalities. The project aims to provide a comprehensive platform for managing leads, facilitating communication, and tracking conversion funnels. Key capabilities include a multi-stage vendor onboarding pipeline, robust call and email systems with retry logic, AI-powered call preparation, real-time phone calling via Twilio with transcription, and signup completion tracking with detailed analytics. The long-term vision is to expand to buyer onboarding and continuously enhance AI capabilities for personalized outreach and efficient lead management.
 
-## Architecture
-- **Frontend**: React + Vite + Tailwind + Shadcn UI + wouter routing + TanStack Query
-- **Backend**: Express + Passport.js (local strategy) + PostgreSQL + Drizzle ORM
-- **Auth**: Email/password with session-based auth (connect-pg-simple for session store)
-- **Email**: SendGrid integration for outbound emails with webhook event tracking
-- **AI**: Replit AI Integrations (OpenAI) for structured call prep output (opener script, key facts, discovery questions, objections, next step)
+## User Preferences
+I want iterative development. Ask before making major changes.
 
-## Key Files
-- `shared/schema.ts` - All database schemas and types (users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research, signup_events, system_settings)
-- `server/routes.ts` - API endpoints + retry logic + email endpoints + webhook + AI endpoints
-- `server/storage.ts` - Database operations (IStorage interface + DatabaseStorage)
-- `server/auth.ts` - Passport setup, session config, middleware
-- `server/email-service.ts` - SendGrid email sending + template builder
-- `server/services/aiProvider.ts` - AI opener script generation with OpenAI + mock fallback
-- `server/db.ts` - Database connection
-- `client/src/lib/auth.tsx` - Auth context/provider
-- `client/src/components/app-sidebar.tsx` - Navigation sidebar
-- `client/src/components/call-modal.tsx` - Call logging popup modal with AI opener section
-- `client/src/pages/today-view.tsx` - Caller Today View (NEW/RETRY/ACTIVE-PENDING/COMPLETED tabs)
-- `client/src/pages/lead-detail.tsx` - Lead detail with Overview/Call Logs/Emails/Notes/AI Script tabs
-- `client/src/pages/admin/ai-prompts.tsx` - Admin AI prompt template management
-- `client/src/pages/` - All page components
+## System Architecture
+The application features a modern full-stack architecture. The **frontend** is built with React, Vite, Tailwind CSS, Shadcn UI for components, wouter for routing, and TanStack Query for data fetching. The **backend** uses Express.js with Passport.js for authentication (local strategy with session-based auth and `connect-pg-simple` for session store), PostgreSQL as the database, and Drizzle ORM for database interactions.
 
-## Roles
-- **Admin**: Full access - upload leads, assign batches, manage users, view all leads, send emails, manage AI prompts
-- **Vendor Caller**: Today View, My Assigned, All Vendor Leads (read-only), edit assigned leads, log calls, add notes, send emails to assigned leads, generate/view AI scripts
-- **Buyer Caller**: Scaffolded in schema but not yet built
+**UI/UX Decisions:**
+- **Design System:** Shadcn UI components ensure a consistent and modern aesthetic.
+- **Color Scheme:** Utilizes Tailwind CSS for flexible styling and a clean, professional appearance.
+- **User Roles:** Distinct interfaces and access levels for Admin and Vendor Caller roles, with future expansion for Buyer Callers.
 
-## Call Outcomes (Stage 2)
-Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERESTED, SPOKE_SEND_INFO, SPOKE_FOLLOW_UP, SPOKE_INTERESTED
+**Technical Implementations & Feature Specifications:**
 
-### Retry Logic
-- Retry outcomes (NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED): schedule retry after N business days
-- SPOKE_NOT_INTERESTED: marks lead unreachable
-- SPOKE_SEND_INFO, SPOKE_FOLLOW_UP, SPOKE_INTERESTED: no retry, no unreachable — goes to ACTIVE/PENDING tab
-- Max retry attempts and delay configurable via system_settings table
-- Business day calculation skips Saturday and Sunday
+1.  **Lead Management:**
+    *   Leads are categorized by pipeline (Vendor, Buyer).
+    *   Leads progress through various call statuses (NOT_CALLED, SPOKE_INTERESTED, etc.) and signup statuses (NOT_SIGNED_UP, SIGNED_UP).
+    *   A "Today View" dashboard organizes leads into NEW, RETRY, ACTIVE/PENDING, and COMPLETED tabs based on their status and eligibility for action.
+    *   Unreachable leads can be toggled for visibility.
 
-### Today View Tab Mapping (Stage 2.1)
-- **NEW**: statusCall=NOT_CALLED, unreachable=false, statusSignup!=SIGNED_UP
-- **RETRY**: retryNextEligibleAt IS NOT NULL, unreachable=false, statusSignup!=SIGNED_UP
-  - Shows both eligible-now and future-retry leads (with date indicators)
-  - Stats bar "Retry Eligible" count only counts eligible-now leads
-- **ACTIVE/PENDING**: statusCall IN (SPOKE_SEND_INFO, SPOKE_FOLLOW_UP, SPOKE_INTERESTED, SPOKE_NOT_INTERESTED) AND retryNextEligibleAt IS NULL, unreachable=false, statusSignup!=SIGNED_UP
-- **COMPLETED**: statusSignup=SIGNED_UP only (placeholder for webhook)
-- Unreachable leads hidden by default; toggle "Show Unreachable" checkbox to include them in NEW/RETRY/ACTIVE tabs
-- Invariant: retry outcomes always set either retryNextEligibleAt or unreachable=true, ensuring no lead disappears
+2.  **Call System:**
+    *   **Call Outcomes:** Fixed set of outcomes (e.g., NO_ANSWER, SPOKE_INTERESTED)
+    *   **Retry Logic:** Automated scheduling of retries for specific outcomes (e.g., NO_ANSWER) after a configurable number of business days, with a maximum retry limit.
+    *   **Twilio Integration:**
+        *   Supports WebRTC browser calls and bridged agent phone calls.
+        *   Automatic call recording with access-controlled playback.
+        *   OpenAI Whisper transcription of recordings, with status tracking.
+        *   Pre-call timing warning based on lead's business hours.
+        *   Comprehensive API endpoints for call initiation, wrap-up, and status updates.
+    *   **Caller Tools:** Call logging modal, AI opener script display, lead detail view with call history.
+    *   **Caller Self-Pull:** Callers can pull unassigned leads based on filters.
 
-## Email System (Stage 3)
-### Templates
-- **Send Info**: Initial information email with signup link
-- **Follow Up**: Follow-up email referencing previous communication
-- **Unreachable Outreach**: Last-resort email for unreachable/max-retry leads
+3.  **Email System:**
+    *   **Outbound Emails:** SendGrid integration for sending various templated emails (Send Info, Follow Up, Unreachable Outreach).
+    *   **Gating Rules:** Emails can only be sent if specific conditions are met (e.g., call log exists, lead is not unreachable).
+    *   **Email Tracking:** SendGrid webhooks process open, click, bounce, and dropped events, updating email status per lead.
+    *   **Template Management:** Admin users can manage email templates via a dedicated interface, supporting variable substitution and defaulting.
 
-### Gating Rules
-- **Send Info**: Requires call log + confirmed email + not unreachable
-- **Follow Up**: Requires Send Info email sent first + call log + confirmed email + not unreachable
-- **Unreachable Outreach**: Requires lead unreachable or max retries reached + any email available
+4.  **AI Research Engine:**
+    *   **AI-Powered Call Prep:** Generates structured call preparation content (opener script, key facts, discovery questions, objections, next steps) using OpenAI.
+    *   **Versioned History:** Stores multiple versions of AI research per lead, with a `is_current` flag, allowing for prompt evolution without losing historical context.
+    *   **Prompt Management:** Admins can manage AI prompt templates with variable substitution, and changes invalidate cached AI scripts.
+    *   **Frontend Integration:** AI scripts are prominently displayed in the call modal and on the lead detail page.
 
-### Email Tracking
-- Each lead gets a unique `leadToken` (UUID) embedded in signup URLs
-- SendGrid webhook (POST /api/sendgrid/events) processes open/click/bounce/dropped events
-- Email status tracked per lead: NOT_SENT → SENT → OPENED → CLICKED / BOUNCED
-- Email logs stored with template type, status, SendGrid message ID
-- Mock mode available when SendGrid API key not configured
+5.  **Signup Completion Tracking:**
+    *   Tracks lead signup completion via an external webhook or admin manual override.
+    *   Records audit trails for all signup events, ensuring data integrity and idempotency.
+    *   Integrates signup status into lead details and the Today View.
 
-### Template Management
-- Admin-only page at `/admin/email-templates`
-- Templates stored in `email_templates` table (pipeline_type + template_type unique)
-- Templates use variable substitution: {{company_name}}, {{contact_email}}, {{caller_name}}, {{signup_link}}, {{city}}, {{state}}
-- Default templates auto-loaded if no DB record exists
-- Restore Default button resets template to hardcoded defaults
-- Email sending pulls latest template from DB at send time (dynamic, not hardcoded)
+6.  **Admin & Reporting:**
+    *   **Admin Dashboard:** Provides tools for lead assignment, user management, and system settings.
+    *   **Performance Dashboard:** Offers detailed metrics on caller activity (calls, emails), email engagement rates, and conversion funnels (Calls → Signup%, Click → Signup%). Includes breakdowns by caller, state, category, and call timing analysis.
+    *   **Signup Metrics Dashboard:** Tracks total signups and per-caller signup performance over selectable date ranges.
+    *   **AI Prompt & Email Template Management:** Dedicated admin pages for managing AI prompts and email templates.
 
-### API Endpoints
-- `GET /api/leads/:id/emails` - Get email logs for a lead
-- `GET /api/leads/:id/email-eligibility` - Check which templates can be sent
-- `POST /api/leads/:id/email/send` - Send email (body: { templateType })
-- `POST /api/sendgrid/events` - SendGrid webhook receiver
-- `GET /api/templates?pipeline=vendor` - Get templates for pipeline (admin only)
-- `POST /api/templates` - Save/update a template (admin only)
-- `POST /api/templates/restore-default` - Restore template to default (admin only)
+7.  **Database & Schema:**
+    *   PostgreSQL database managed with Drizzle ORM.
+    *   Schema defines tables for users, leads, call logs, notes, email logs, email events, email templates, AI prompts, AI research, signup events, and system settings.
+    *   Unique indexing ensures data integrity, especially for leads.
 
-## AI Research Engine (Stage 4 V2 - Versioned History + Structured Output)
-### Overview
-- Generates structured call prep using OpenAI (via Replit AI Integrations)
-- **Structured JSON output**: opener_script, summary_bullets, discovery_questions, objections, suggested_next_step
-- Versioned history in `ai_research` table with `is_current` flag (replaces old `ai_research_cache`)
-- Mock fallback when AI not configured (returns placeholder structured data)
-
-### Structured Output Schema (AiOutputJson)
-- `opener_script`: Personalized opening script for calls
-- `summary_bullets`: Key facts about the business (array)
-- `discovery_questions`: Questions to ask during the call (array)
-- `objections`: Common objections and responses (array)
-- `suggested_next_step`: Recommended follow-up action
-
-### Prompt Management
-- Admin-only page at `/admin/ai-prompts`
-- Prompts stored per pipeline in `ai_prompts` table (pipeline_type unique)
-- Template variables: {{company_name}}, {{category_keyword}}, {{city}}, {{state}}, {{phone}}, {{website}}, {{rating}}, {{reviews_count}}, {{scraped_email}}, {{confirmed_email}}, {{full_address}}
-- Each save auto-increments version; cached scripts become stale when prompt version changes
-- Restore Default resets to hardcoded default prompt
-
-### Versioned History System
-- Results stored in `ai_research` table (multiple records per lead, `is_current` flag)
-- Each generation marks previous records as `is_current=false`, inserts new `is_current=true`
-- Stores: `prompt_used` (full prompt text), `output_json` (structured), `opener_script` (extracted top-level)
-- Stale detection: cached prompt version < current prompt version
-- Force-regenerate creates new version, marks old not current
-
-### Frontend Integration
-- **Lead Detail Page**: "AI Call Prep" tab with Opener Script / More Details sub-tabs
-  - Opener Script: prominent card with copy button
-  - More Details: Key Facts, Discovery Questions, Objection Handling, Suggested Next Step
-- **Call Modal**: Always-visible AI Opener Script panel with generate/regenerate/copy
-
-### Pre-Call Timing Warning
-- Parses `hours_raw` field from lead data for business hours
-- Detects if current time is within 15 minutes of open/close in lead's timezone
-- Shows AlertDialog warning before logging call
-- Logs `within_bad_timing_window` boolean on call_logs table
-
-### API Endpoints
-- `GET /api/leads/:id/ai-research` - Get current AI research for lead (includes stale detection)
-- `POST /api/leads/:id/ai-research` - Generate/regenerate AI research (body: { force })
-- `GET /api/admin/ai-prompts` - Get all AI prompts (admin only)
-- `PUT /api/admin/ai-prompts` - Save/update AI prompt (admin only)
-- `POST /api/admin/ai-prompts/restore-default` - Restore prompt to default (admin only)
-
-## Signup Completion Tracking (Stage 6)
-### Overview
-- Tracks when vendors complete signup via webhook or admin manual override
-- Signup fields on leads: statusSignup, signedUpAt, signedUpEmail, signedUpUserId, signupSource
-- Audit trail in signup_events table with full payload, source IP, user agent
-- Idempotency via unique index on idempotency_key (nullable)
-
-### Webhook
-- POST /api/signup/webhook - External webhook receiver
-- Requires `X-Webhook-Secret` header matching SIGNUP_WEBHOOK_SECRET env var (mandatory)
-- Validates payload with Zod: lead_token (required), email, user_id, idempotency_key
-- Returns 503 if secret not configured, 401 if wrong secret, 400 if invalid payload
-- Duplicate idempotency_key returns success without re-processing
-
-### Admin Manual Override
-- POST /api/admin/leads/:id/mark-signed-up - Admin marks lead as signed up
-- Records audit event with admin user ID
-
-### Signup Metrics Dashboard
-- GET /api/admin/metrics/signups?range=today|week|month - Metrics with caller leaderboard
-- Admin page at /admin/signup-metrics with range selector
-- Shows total signups and per-caller breakdown
-
-### Lead Detail Integration
-- Signup Status card on Overview tab showing status, date, source
-- Admin "Mark as Signed Up" button for non-signed-up leads
-
-### Today View Integration
-- COMPLETED tab shows leads with statusSignup=SIGNED_UP
-
-### API Endpoints
-- `POST /api/signup/webhook` - External signup webhook (requires X-Webhook-Secret header)
-- `POST /api/admin/leads/:id/mark-signed-up` - Admin manual override (admin only)
-- `GET /api/admin/leads/:id/signup-events` - Signup audit trail (admin only)
-- `GET /api/admin/metrics/signups?range=today|week|month` - Signup metrics (admin only)
-
-## Admin Performance Dashboard
-- Admin page at `/admin/performance-dashboard`
-- GET /api/admin/metrics/performance?range=today|week|month
-- Calls per caller, emails per caller, email open/click/bounce rates
-- Full conversion funnel: Calls → Call→Email% → Email→Open% → Open→Click% → Click→Signup% → Call→Signup%
-- Per-caller breakdown: calls, emails, Call→Email%, signups, Click→Signup%, unreachable count, avg attempts per lead
-- Signups by State and Signups by Category breakdowns
-- Call Timing Analysis: bad timing calls, no-answer rate in bad timing, best performing hours by connect rate
-- Date range selector (today/week/month)
-
-### Caller Today View Stats
-- Daily stats: Assigned, Retry Ready, Calls Today, Emails Today, Call→Email %
-- Weekly stats: Calls This Week, Emails This Week, Signups This Week, Conversion %
-
-## Caller Self-Pull
-- POST /api/leads/self-pull - Caller pulls 1-50 unassigned leads
-- State/category filters supported
-- Button on Today View with configurable count and filters
-
-## Assign Batch Filters
-- State, category, min rating, has-phone, has-email filters
-- Min rating uses CAST(rating AS NUMERIC) for proper comparison
-- Checkboxes for has-phone and has-email
-
-## Seed Data
-- Default admin: admin@supplystreamline.com / admin123
-- System settings: max_retry_attempts=3, retry_delay_business_days=2
-- Created automatically on first run if no users exist
-
-## Database
-- PostgreSQL with Drizzle ORM
-- Push schema: `npm run db:push`
-- Tables: users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research, signup_events, system_settings
-- Unique index: (pipeline_type, place_id) WHERE place_id IS NOT NULL
-
-## Running
-- `npm run dev` starts Express + Vite on port 5000
+## External Dependencies
+*   **SendGrid:** For sending outbound emails and tracking email events via webhooks.
+*   **Replit AI Integrations (OpenAI):** Utilized by the AI Research Engine for generating structured call preparation content.
+*   **Twilio:** Powers real-time phone calling functionalities, including WebRTC and bridged calls, call recording, and webhook events for call status and recording completion.
+*   **PostgreSQL:** The primary database for all application data.

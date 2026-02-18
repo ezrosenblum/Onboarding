@@ -24,7 +24,8 @@ import {
   Building2, Phone, Mail, MapPin, Globe, Star, MessageSquare,
   Clock, Save, Plus, Loader2, ArrowLeft, ExternalLink, PhoneCall,
   Send, AlertCircle, Sparkles, RefreshCw, AlertTriangle, Copy,
-  CheckCircle2, ListChecks, HelpCircle, Shield, ArrowRight
+  CheckCircle2, ListChecks, HelpCircle, Shield, ArrowRight,
+  Play, FileText, Headphones, Monitor, Smartphone, ChevronDown, ChevronUp
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
@@ -440,24 +441,7 @@ export default function LeadDetailPage() {
           ) : (
             <div className="space-y-3">
               {(callLogs ?? []).map((log) => (
-                <Card key={log.id} data-testid={`card-call-${log.id}`}>
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-3 flex-wrap">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
-                        <PhoneCall className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge variant="outline" className="text-xs">{log.outcome.replace(/_/g, " ")}</Badge>
-                          {log.durationSeconds && <span className="text-xs text-muted-foreground">{log.durationSeconds}s</span>}
-                          {log.withinBadTimingWindow && <Badge variant="secondary" className="text-xs">Bad Timing</Badge>}
-                        </div>
-                        {log.notes && <p className="text-sm mt-1">{log.notes}</p>}
-                        <p className="text-xs text-muted-foreground mt-1">{format(new Date(log.calledAt), "MMM d, yyyy h:mm a")}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+                <CallLogCard key={log.id} log={log} isAdmin={user?.role === "admin"} />
               ))}
             </div>
           )}
@@ -784,5 +768,139 @@ function InfoRow({ icon, label, value }: { icon: any; label: string; value: stri
         <p className="text-sm">{value}</p>
       </div>
     </div>
+  );
+}
+
+function formatCallDuration(seconds: number | null | undefined): string {
+  if (!seconds) return "";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function CallLogCard({ log, isAdmin }: { log: CallLog; isAdmin: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const [transcriptData, setTranscriptData] = useState<string | null>(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+
+  const hasRecording = !!(log as any).recordingUrl || !!(log as any).recordingSid;
+  const hasTranscript = (log as any).transcriptStatus === "READY";
+  const transcriptStatus = (log as any).transcriptStatus;
+  const callMode = (log as any).callMode;
+  const twilioCallSid = (log as any).twilioCallSid;
+
+  async function loadTranscript() {
+    if (transcriptData) return;
+    setTranscriptLoading(true);
+    try {
+      const res = await fetch(`/api/call/${log.id}/transcript`);
+      if (res.ok) {
+        const data = await res.json();
+        setTranscriptData(data.transcript);
+      }
+    } catch {}
+    setTranscriptLoading(false);
+  }
+
+  return (
+    <Card data-testid={`card-call-${log.id}`}>
+      <CardContent className="p-4">
+        <div className="flex items-start gap-3 flex-wrap">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
+            {callMode === "BROWSER" ? (
+              <Monitor className="h-4 w-4 text-muted-foreground" />
+            ) : callMode === "AGENT_PHONE" ? (
+              <Smartphone className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <PhoneCall className="h-4 w-4 text-muted-foreground" />
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              {log.outcome ? (
+                <Badge variant="outline" className="text-xs">{log.outcome.replace(/_/g, " ")}</Badge>
+              ) : (
+                <Badge variant="secondary" className="text-xs">In Progress</Badge>
+              )}
+              {log.durationSeconds && (
+                <span className="text-xs text-muted-foreground">{formatCallDuration(log.durationSeconds)}</span>
+              )}
+              {log.withinBadTimingWindow && <Badge variant="secondary" className="text-xs">Bad Timing</Badge>}
+              {callMode && (
+                <Badge variant="outline" className="text-xs">
+                  {callMode === "BROWSER" ? "Browser" : callMode === "AGENT_PHONE" ? "Phone" : "Manual"}
+                </Badge>
+              )}
+              {hasRecording && (
+                <Badge variant="outline" className="text-xs">
+                  <Headphones className="h-3 w-3 mr-1" /> Recorded
+                </Badge>
+              )}
+              {transcriptStatus && transcriptStatus !== "NONE" && (
+                <Badge
+                  variant={transcriptStatus === "READY" ? "outline" : "secondary"}
+                  className="text-xs"
+                >
+                  <FileText className="h-3 w-3 mr-1" />
+                  {transcriptStatus === "READY" ? "Transcribed" : transcriptStatus === "PROCESSING" || transcriptStatus === "PENDING" ? "Transcribing..." : transcriptStatus === "FAILED" ? "Transcription Failed" : transcriptStatus}
+                </Badge>
+              )}
+            </div>
+            {log.notes && <p className="text-sm mt-1">{log.notes}</p>}
+            <p className="text-xs text-muted-foreground mt-1">{format(new Date(log.calledAt), "MMM d, yyyy h:mm a")}</p>
+          </div>
+
+          {(hasRecording || hasTranscript) && (
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => {
+                setExpanded(!expanded);
+                if (!expanded && hasTranscript) loadTranscript();
+              }}
+              data-testid={`button-expand-call-${log.id}`}
+            >
+              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </Button>
+          )}
+        </div>
+
+        {expanded && (
+          <div className="mt-3 pt-3 border-t space-y-3">
+            {hasRecording && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1">Recording</p>
+                <audio
+                  controls
+                  className="w-full"
+                  src={`/api/call/${log.id}/recording`}
+                  data-testid={`audio-recording-${log.id}`}
+                >
+                  Your browser does not support audio playback.
+                </audio>
+              </div>
+            )}
+            {hasTranscript && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1">Transcript</p>
+                {transcriptLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Loading transcript...
+                  </div>
+                ) : transcriptData ? (
+                  <div className="rounded-md bg-muted p-3">
+                    <p className="text-sm whitespace-pre-wrap" data-testid={`text-transcript-${log.id}`}>
+                      {transcriptData}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Transcript not available</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

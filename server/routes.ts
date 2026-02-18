@@ -12,6 +12,17 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { buildEmailContent, sendEmail, getDefaultTemplates } from "./email-service";
 import { generateStructuredResearch, getDefaultAiPrompt, isAiConfigured, buildFinalPrompt } from "./services/aiProvider";
+import {
+  isTwilioConfigured,
+  generateAccessToken,
+  getTwilioFromPhoneNumber,
+  initiateCallBrowser,
+  initiateBridgedCall,
+  getRecordingAudioUrl,
+  transcribeRecording,
+  getTwilioClient,
+} from "./services/twilioService";
+import twilio from "twilio";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -882,6 +893,382 @@ export async function registerRoutes(
     }
     const metrics = await storage.getSignupMetrics(range as "today" | "week" | "month");
     res.json(metrics);
+  });
+
+  app.get("/api/twilio/status-check", requireAuth, async (req, res) => {
+    const configured = await isTwilioConfigured();
+    res.json({ configured });
+  });
+
+  app.get("/api/twilio/token", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const token = await generateAccessToken(`user_${user.id}`);
+      const fromNumber = await getTwilioFromPhoneNumber();
+      res.json({ token, fromNumber });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to generate token" });
+    }
+  });
+
+  app.post("/api/leads/:id/call/start", requireAuth, async (req, res) => {
+    try {
+      const leadId = parseInt(req.params.id);
+      const user = req.user as any;
+      const { callMode, phoneOverride, agentPhone } = req.body;
+
+      const lead = await storage.getLeadById(leadId);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      if (user.role !== "admin" && lead.assignedToUserId !== user.id) {
+        return res.status(403).json({ message: "Not authorized for this lead" });
+      }
+
+      const toNumber = phoneOverride || lead.phone;
+      if (!toNumber) return res.status(400).json({ message: "No phone number available" });
+
+      const fromNumber = await getTwilioFromPhoneNumber();
+
+      const callLog = await storage.createCallLog({
+        leadId,
+        userId: user.id,
+        callMode: callMode || "BROWSER",
+        callStatus: "initiated",
+        fromNumber,
+        toNumber,
+        withinBadTimingWindow: false,
+      } as any);
+
+      if (callMode === "AGENT_PHONE") {
+        const effectiveAgentPhone = agentPhone || user.agentPhone;
+        if (!effectiveAgentPhone) {
+          return res.status(400).json({ message: "Agent phone not configured" });
+        }
+
+        if (agentPhone && agentPhone !== user.agentPhone) {
+          await storage.updateUser(user.id, { agentPhone });
+        }
+
+        const callSid = await initiateBridgedCall(callLog.id, effectiveAgentPhone, toNumber, fromNumber);
+        await storage.updateCallLog(callLog.id, { twilioCallSid: callSid } as any);
+        await storage.createCallEvent({ callLogId: callLog.id, twilioCallSid: callSid, eventType: "initiated" });
+        res.json({ callLogId: callLog.id, callSid, mode: "AGENT_PHONE" });
+      } else {
+        const token = await generateAccessToken(`user_${user.id}`);
+        res.json({ callLogId: callLog.id, token, fromNumber, toNumber, mode: "BROWSER" });
+      }
+    } catch (err: any) {
+      console.error("Call start error:", err);
+      res.status(500).json({ message: err.message || "Failed to start call" });
+    }
+  });
+
+  app.post("/api/leads/:id/call/:callLogId/wrap-up", requireAuth, async (req, res) => {
+    try {
+      const leadId = parseInt(req.params.id);
+      const callLogId = parseInt(req.params.callLogId);
+      const user = req.user as any;
+      const { outcome, notes, confirmedEmail, bestTimeToCall, withinBadTimingWindow } = req.body;
+
+      if (!outcome || !callOutcomeEnum.includes(outcome)) {
+        return res.status(400).json({ message: "Valid outcome required" });
+      }
+
+      const lead = await storage.getLeadById(leadId);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      await storage.updateCallLog(callLogId, {
+        outcome,
+        notes: notes || null,
+        withinBadTimingWindow: withinBadTimingWindow || false,
+      } as any);
+
+      const leadUpdate: any = {
+        statusCall: outcome,
+        attemptCount: lead.attemptCount + 1,
+      };
+
+      if (confirmedEmail) leadUpdate.confirmedEmail = confirmedEmail;
+      if (bestTimeToCall) leadUpdate.bestTimeToCall = bestTimeToCall;
+
+      if (retryOutcomes.includes(outcome as CallOutcome)) {
+        const maxRetries = parseInt((await storage.getSetting("max_retry_attempts")) || "3");
+        const retryDelay = parseInt((await storage.getSetting("retry_delay_business_days")) || "2");
+
+        if (lead.attemptCount + 1 >= maxRetries) {
+          leadUpdate.unreachable = true;
+          leadUpdate.retryNextEligibleAt = null;
+        } else {
+          leadUpdate.retryNextEligibleAt = addBusinessDays(new Date(), retryDelay);
+        }
+      } else if (outcome === "SPOKE_NOT_INTERESTED") {
+        leadUpdate.unreachable = true;
+      } else {
+        leadUpdate.retryNextEligibleAt = null;
+      }
+
+      await storage.updateLead(leadId, leadUpdate);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Wrap-up failed" });
+    }
+  });
+
+  app.post("/api/call/:callLogId/update-sid", requireAuth, async (req, res) => {
+    try {
+      const callLogId = parseInt(req.params.callLogId);
+      const { twilioCallSid } = req.body;
+      if (!twilioCallSid) return res.status(400).json({ message: "Call SID required" });
+      await storage.updateCallLog(callLogId, { twilioCallSid } as any);
+      await storage.createCallEvent({ callLogId, twilioCallSid, eventType: "sid_registered" });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to update SID" });
+    }
+  });
+
+  app.post("/api/call/:callLogId/end", requireAuth, async (req, res) => {
+    try {
+      const callLogId = parseInt(req.params.callLogId);
+      const { durationSeconds } = req.body;
+      await storage.updateCallLog(callLogId, {
+        callStatus: "completed",
+        endedAt: new Date(),
+        durationSeconds: durationSeconds || null,
+      } as any);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to end call" });
+    }
+  });
+
+  app.post("/api/twilio/voice", (req, res) => {
+    const VoiceResponse = twilio.twiml.VoiceResponse;
+    const twiml = new VoiceResponse();
+    const to = req.body.To;
+    const callLogId = req.body.callLogId;
+
+    if (to) {
+      const dial = twiml.dial({
+        callerId: req.body.From || req.body.Caller,
+        record: "record-from-answer-dual" as any,
+        recordingStatusCallback: "/api/twilio/recording",
+        recordingStatusCallbackEvent: "completed",
+      });
+      dial.number(to);
+    } else {
+      twiml.say("No destination number provided.");
+    }
+
+    res.type("text/xml");
+    res.send(twiml.toString());
+  });
+
+  app.post("/api/twilio/bridge", (req, res) => {
+    const VoiceResponse = twilio.twiml.VoiceResponse;
+    const twiml = new VoiceResponse();
+    const to = req.query.to as string;
+
+    if (to) {
+      const dial = twiml.dial({
+        record: "record-from-answer-dual" as any,
+        recordingStatusCallback: "/api/twilio/recording",
+        recordingStatusCallbackEvent: "completed",
+      });
+      dial.number(to);
+    } else {
+      twiml.say("No destination number provided.");
+    }
+
+    res.type("text/xml");
+    res.send(twiml.toString());
+  });
+
+  app.post("/api/twilio/status", async (req, res) => {
+    try {
+      const { CallSid, CallStatus, CallDuration, Timestamp } = req.body;
+
+      if (!CallSid) return res.sendStatus(200);
+
+      const callLog = await storage.getCallLogByTwilioSid(CallSid);
+      if (!callLog) return res.sendStatus(200);
+
+      const update: any = { callStatus: CallStatus };
+
+      if (CallStatus === "in-progress" || CallStatus === "in_progress") {
+        update.callStatus = "in_progress";
+        update.startedAt = new Date();
+      } else if (CallStatus === "completed") {
+        update.endedAt = new Date();
+        if (CallDuration) update.durationSeconds = parseInt(CallDuration);
+      }
+
+      await storage.updateCallLog(callLog.id, update);
+      await storage.createCallEvent({
+        callLogId: callLog.id,
+        twilioCallSid: CallSid,
+        eventType: CallStatus,
+        raw: req.body,
+      });
+
+      res.sendStatus(200);
+    } catch (err) {
+      console.error("Twilio status webhook error:", err);
+      res.sendStatus(200);
+    }
+  });
+
+  app.post("/api/twilio/recording", async (req, res) => {
+    try {
+      const { CallSid, RecordingSid, RecordingUrl, RecordingDuration, RecordingStatus } = req.body;
+
+      if (!CallSid || RecordingStatus !== "completed") return res.sendStatus(200);
+
+      const callLog = await storage.getCallLogByTwilioSid(CallSid);
+      if (!callLog) return res.sendStatus(200);
+
+      await storage.updateCallLog(callLog.id, {
+        recordingSid: RecordingSid,
+        recordingUrl: RecordingUrl,
+        recordingDurationSeconds: RecordingDuration ? parseInt(RecordingDuration) : null,
+        transcriptStatus: "PENDING",
+      } as any);
+
+      await storage.createCallEvent({
+        callLogId: callLog.id,
+        twilioCallSid: CallSid,
+        eventType: "recording_completed",
+        raw: req.body,
+      });
+
+      processTranscription(callLog.id, RecordingUrl).catch(err =>
+        console.error(`Transcription failed for call ${callLog.id}:`, err)
+      );
+
+      res.sendStatus(200);
+    } catch (err) {
+      console.error("Twilio recording webhook error:", err);
+      res.sendStatus(200);
+    }
+  });
+
+  async function processTranscription(callLogId: number, recordingUrl: string) {
+    try {
+      await storage.updateCallLog(callLogId, { transcriptStatus: "PROCESSING" } as any);
+      const text = await transcribeRecording(recordingUrl);
+      await storage.updateCallLog(callLogId, {
+        transcriptStatus: "READY",
+        transcriptText: text,
+        transcriptProvider: "openai-whisper",
+      } as any);
+    } catch (err: any) {
+      await storage.updateCallLog(callLogId, {
+        transcriptStatus: "FAILED",
+        transcriptError: err.message || "Transcription failed",
+      } as any);
+    }
+  }
+
+  app.post("/api/admin/call/:callLogId/retry-transcription", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const callLogId = parseInt(req.params.callLogId);
+      const callLog = await storage.getCallLogsByLeadId(0);
+      const cl = (await db.select().from(callLogs).where(eq(callLogs.id, callLogId)))[0];
+      if (!cl) return res.status(404).json({ message: "Call log not found" });
+      if (!cl.recordingUrl) return res.status(400).json({ message: "No recording available" });
+
+      processTranscription(callLogId, cl.recordingUrl).catch(err =>
+        console.error(`Retry transcription failed for call ${callLogId}:`, err)
+      );
+      res.json({ success: true, message: "Transcription retry started" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to retry transcription" });
+    }
+  });
+
+  app.get("/api/call/:callLogId/recording", requireAuth, async (req, res) => {
+    try {
+      const callLogId = parseInt(req.params.callLogId);
+      const user = req.user as any;
+      const [cl] = await db.select().from(callLogs).where(eq(callLogs.id, callLogId));
+
+      if (!cl) return res.status(404).json({ message: "Call log not found" });
+
+      if (user.role !== "admin") {
+        const lead = await storage.getLeadById(cl.leadId);
+        if (!lead || lead.assignedToUserId !== user.id) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+
+      if (!cl.recordingSid) return res.status(404).json({ message: "No recording" });
+
+      const url = await getRecordingAudioUrl(cl.recordingSid);
+      const audioRes = await fetch(url);
+      if (!audioRes.ok) return res.status(502).json({ message: "Failed to fetch recording" });
+      res.setHeader("Content-Type", audioRes.headers.get("content-type") || "audio/mpeg");
+      res.setHeader("Content-Length", audioRes.headers.get("content-length") || "0");
+      const arrayBuf = await audioRes.arrayBuffer();
+      res.send(Buffer.from(arrayBuf));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to get recording" });
+    }
+  });
+
+  app.get("/api/call/:callLogId/transcript", requireAuth, async (req, res) => {
+    try {
+      const callLogId = parseInt(req.params.callLogId);
+      const user = req.user as any;
+      const [cl] = await db.select().from(callLogs).where(eq(callLogs.id, callLogId));
+
+      if (!cl) return res.status(404).json({ message: "Call log not found" });
+
+      if (user.role !== "admin") {
+        const lead = await storage.getLeadById(cl.leadId);
+        if (!lead || lead.assignedToUserId !== user.id) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      }
+
+      res.json({
+        status: cl.transcriptStatus,
+        transcript: cl.transcriptText,
+        error: cl.transcriptError,
+        provider: cl.transcriptProvider,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to get transcript" });
+    }
+  });
+
+  app.put("/api/user/agent-phone", requireAuth, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const { agentPhone } = req.body;
+      if (!agentPhone) return res.status(400).json({ message: "Phone number required" });
+      await storage.updateUser(user.id, { agentPhone });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to update agent phone" });
+    }
+  });
+
+  app.get("/api/user/agent-phone", requireAuth, async (req, res) => {
+    const user = req.user as any;
+    const u = await storage.getUserById(user.id);
+    res.json({ agentPhone: u?.agentPhone || null });
+  });
+
+  app.get("/api/admin/settings/call-disclaimer", requireAuth, requireAdmin, async (req, res) => {
+    const disclaimer = await storage.getSetting("call_recording_disclaimer");
+    res.json({ disclaimer: disclaimer || "This call may be recorded for quality and training purposes." });
+  });
+
+  app.put("/api/admin/settings/call-disclaimer", requireAuth, requireAdmin, async (req, res) => {
+    const { disclaimer } = req.body;
+    if (!disclaimer) return res.status(400).json({ message: "Disclaimer text required" });
+    await storage.setSetting("call_recording_disclaimer", disclaimer);
+    res.json({ success: true });
   });
 
   return httpServer;

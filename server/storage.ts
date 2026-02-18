@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { eq, and, isNull, ilike, sql, desc, asc, lte, gte, count } from "drizzle-orm";
-import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearch, signupEvents, systemSettings } from "@shared/schema";
-import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchRecord, AiOutputJson, SignupEvent, SystemSetting } from "@shared/schema";
+import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearch, signupEvents, systemSettings, callEvents } from "@shared/schema";
+import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchRecord, AiOutputJson, SignupEvent, SystemSetting, CallEvent } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
 export interface CallerPerformance {
@@ -107,7 +107,15 @@ export interface IStorage {
   getPerformanceMetrics(range: "today" | "week" | "month"): Promise<PerformanceMetrics>;
 
   getSetting(key: string): Promise<string | undefined>;
+  setSetting(key: string, value: string): Promise<void>;
   getUserCount(): Promise<number>;
+  updateUser(id: number, data: Partial<User>): Promise<User | undefined>;
+
+  getCallLogByTwilioSid(sid: string): Promise<CallLog | undefined>;
+  updateCallLog(id: number, data: Partial<CallLog>): Promise<CallLog | undefined>;
+  createCallEvent(data: { callLogId: number; twilioCallSid?: string; eventType: string; raw?: any }): Promise<CallEvent>;
+  getCallEventsByCallLogId(callLogId: number): Promise<CallEvent[]>;
+  getPendingTranscriptions(): Promise<CallLog[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -803,6 +811,51 @@ export class DatabaseStorage implements IStorage {
   async getSetting(key: string): Promise<string | undefined> {
     const [row] = await db.select().from(systemSettings).where(eq(systemSettings.key, key));
     return row?.value;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    await db.insert(systemSettings).values({ key, value }).onConflictDoUpdate({
+      target: systemSettings.key,
+      set: { value },
+    });
+  }
+
+  async updateUser(id: number, data: Partial<User>): Promise<User | undefined> {
+    const [user] = await db.update(users).set(data as any).where(eq(users.id, id)).returning();
+    return user;
+  }
+
+  async getCallLogByTwilioSid(sid: string): Promise<CallLog | undefined> {
+    const [row] = await db.select().from(callLogs).where(eq(callLogs.twilioCallSid, sid));
+    return row;
+  }
+
+  async updateCallLog(id: number, data: Partial<CallLog>): Promise<CallLog | undefined> {
+    const [row] = await db.update(callLogs).set(data as any).where(eq(callLogs.id, id)).returning();
+    return row;
+  }
+
+  async createCallEvent(data: { callLogId: number; twilioCallSid?: string; eventType: string; raw?: any }): Promise<CallEvent> {
+    const [row] = await db.insert(callEvents).values({
+      callLogId: data.callLogId,
+      twilioCallSid: data.twilioCallSid || null,
+      eventType: data.eventType,
+      raw: data.raw || null,
+    }).returning();
+    return row;
+  }
+
+  async getCallEventsByCallLogId(callLogId: number): Promise<CallEvent[]> {
+    return db.select().from(callEvents).where(eq(callEvents.callLogId, callLogId)).orderBy(asc(callEvents.createdAt));
+  }
+
+  async getPendingTranscriptions(): Promise<CallLog[]> {
+    return db.select().from(callLogs).where(
+      and(
+        eq(callLogs.transcriptStatus, "PENDING"),
+        sql`${callLogs.recordingUrl} IS NOT NULL`,
+      )
+    ).limit(5);
   }
 }
 

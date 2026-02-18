@@ -6,6 +6,15 @@ import { z } from "zod";
 export const userRoleEnum = ["admin", "vendor_caller", "buyer_caller"] as const;
 export type UserRole = (typeof userRoleEnum)[number];
 
+export const callModeEnum = ["BROWSER", "AGENT_PHONE"] as const;
+export type CallMode = (typeof callModeEnum)[number];
+
+export const twilioCallStatusEnum = ["initiated", "ringing", "in_progress", "completed", "failed", "busy", "no_answer", "canceled"] as const;
+export type TwilioCallStatus = (typeof twilioCallStatusEnum)[number];
+
+export const transcriptStatusEnum = ["NONE", "PENDING", "PROCESSING", "READY", "FAILED"] as const;
+export type TranscriptStatus = (typeof transcriptStatusEnum)[number];
+
 export const callOutcomeEnum = [
   "NO_ANSWER",
   "VOICEMAIL",
@@ -50,6 +59,7 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().$type<UserRole>().default("vendor_caller"),
   dailyCallTarget: integer("daily_call_target"),
+  agentPhone: text("agent_phone"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -105,12 +115,29 @@ export const callLogs = pgTable("call_logs", {
   leadId: integer("lead_id").notNull().references(() => leads.id),
   userId: integer("user_id").notNull().references(() => users.id),
   calledAt: timestamp("called_at").defaultNow().notNull(),
-  outcome: text("outcome").notNull().$type<CallOutcome>(),
+  outcome: text("outcome").$type<CallOutcome>(),
   durationSeconds: integer("duration_seconds"),
   notes: text("notes"),
   withinBadTimingWindow: boolean("within_bad_timing_window").notNull().default(false),
+  twilioCallSid: text("twilio_call_sid"),
+  twilioConferenceSid: text("twilio_conference_sid"),
+  fromNumber: text("from_number"),
+  toNumber: text("to_number"),
+  callMode: text("call_mode").$type<CallMode>(),
+  callStatus: text("call_status").$type<TwilioCallStatus>().default("initiated"),
+  startedAt: timestamp("started_at"),
+  endedAt: timestamp("ended_at"),
+  recordingSid: text("recording_sid"),
+  recordingUrl: text("recording_url"),
+  recordingDurationSeconds: integer("recording_duration_seconds"),
+  transcriptStatus: text("transcript_status").$type<TranscriptStatus>().default("NONE"),
+  transcriptText: text("transcript_text"),
+  transcriptProvider: text("transcript_provider"),
+  transcriptError: text("transcript_error"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [
+  index("call_logs_twilio_sid_idx").on(table.twilioCallSid),
+]);
 
 export const leadNotes = pgTable("lead_notes", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -206,6 +233,18 @@ export const systemSettings = pgTable("system_settings", {
   value: text("value").notNull(),
 });
 
+export const callEvents = pgTable("call_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  callLogId: integer("call_log_id").notNull().references(() => callLogs.id),
+  twilioCallSid: text("twilio_call_sid"),
+  eventType: text("event_type").notNull(),
+  raw: jsonb("raw"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("call_events_call_log_id_idx").on(table.callLogId),
+  index("call_events_twilio_sid_idx").on(table.twilioCallSid),
+]);
+
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, passwordHash: true }).extend({
   password: z.string().min(6, "Password must be at least 6 characters"),
 });
@@ -247,6 +286,8 @@ export type AiResearchRecord = typeof aiResearch.$inferSelect;
 export type SignupEvent = typeof signupEvents.$inferSelect;
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
+
+export type CallEvent = typeof callEvents.$inferSelect;
 
 export const loginSchema = z.object({
   email: z.string().email("Invalid email"),
