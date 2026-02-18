@@ -8,10 +8,10 @@ Internal calling + email + tracking system for onboarding vendors and buyers. St
 - **Backend**: Express + Passport.js (local strategy) + PostgreSQL + Drizzle ORM
 - **Auth**: Email/password with session-based auth (connect-pg-simple for session store)
 - **Email**: SendGrid integration for outbound emails with webhook event tracking
-- **AI**: Replit AI Integrations (OpenAI) for generating personalized call opener scripts
+- **AI**: Replit AI Integrations (OpenAI) for structured call prep output (opener script, key facts, discovery questions, objections, next step)
 
 ## Key Files
-- `shared/schema.ts` - All database schemas and types (users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research_cache, system_settings)
+- `shared/schema.ts` - All database schemas and types (users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research, system_settings)
 - `server/routes.ts` - API endpoints + retry logic + email endpoints + webhook + AI endpoints
 - `server/storage.ts` - Database operations (IStorage interface + DatabaseStorage)
 - `server/auth.ts` - Passport setup, session config, middleware
@@ -86,11 +86,19 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 - `POST /api/templates` - Save/update a template (admin only)
 - `POST /api/templates/restore-default` - Restore template to default (admin only)
 
-## AI Research Engine (Stage 4)
+## AI Research Engine (Stage 4 V2 - Versioned History + Structured Output)
 ### Overview
-- Generates personalized call opener scripts using OpenAI (via Replit AI Integrations)
-- Per-lead caching with prompt version tracking for stale detection
-- Mock fallback when AI not configured (returns placeholder scripts)
+- Generates structured call prep using OpenAI (via Replit AI Integrations)
+- **Structured JSON output**: opener_script, summary_bullets, discovery_questions, objections, suggested_next_step
+- Versioned history in `ai_research` table with `is_current` flag (replaces old `ai_research_cache`)
+- Mock fallback when AI not configured (returns placeholder structured data)
+
+### Structured Output Schema (AiOutputJson)
+- `opener_script`: Personalized opening script for calls
+- `summary_bullets`: Key facts about the business (array)
+- `discovery_questions`: Questions to ask during the call (array)
+- `objections`: Common objections and responses (array)
+- `suggested_next_step`: Recommended follow-up action
 
 ### Prompt Management
 - Admin-only page at `/admin/ai-prompts`
@@ -99,19 +107,28 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 - Each save auto-increments version; cached scripts become stale when prompt version changes
 - Restore Default resets to hardcoded default prompt
 
-### Cache System
-- Results cached in `ai_research_cache` table (lead_id unique)
-- Cache stores prompt version snapshot to detect staleness
-- Force-regenerate overwrites existing cache via POST endpoint
-- Stale indicator shown when cached prompt version < current prompt version
+### Versioned History System
+- Results stored in `ai_research` table (multiple records per lead, `is_current` flag)
+- Each generation marks previous records as `is_current=false`, inserts new `is_current=true`
+- Stores: `prompt_used` (full prompt text), `output_json` (structured), `opener_script` (extracted top-level)
+- Stale detection: cached prompt version < current prompt version
+- Force-regenerate creates new version, marks old not current
 
 ### Frontend Integration
-- **Lead Detail Page**: "AI Script" tab shows cached script, generate/regenerate buttons, stale warning, metadata (model, tokens, version)
-- **Call Modal**: Collapsible "AI Opener Script" section with same generate/view/regenerate UX
+- **Lead Detail Page**: "AI Call Prep" tab with Opener Script / More Details sub-tabs
+  - Opener Script: prominent card with copy button
+  - More Details: Key Facts, Discovery Questions, Objection Handling, Suggested Next Step
+- **Call Modal**: Always-visible AI Opener Script panel with generate/regenerate/copy
+
+### Pre-Call Timing Warning
+- Parses `hours_raw` field from lead data for business hours
+- Detects if current time is within 15 minutes of open/close in lead's timezone
+- Shows AlertDialog warning before logging call
+- Logs `within_bad_timing_window` boolean on call_logs table
 
 ### API Endpoints
-- `GET /api/leads/:id/ai-research` - Get cached AI research for lead (includes stale detection)
-- `POST /api/leads/:id/ai-research` - Generate/regenerate AI opener script
+- `GET /api/leads/:id/ai-research` - Get current AI research for lead (includes stale detection)
+- `POST /api/leads/:id/ai-research` - Generate/regenerate AI research (body: { force })
 - `GET /api/admin/ai-prompts` - Get all AI prompts (admin only)
 - `PUT /api/admin/ai-prompts` - Save/update AI prompt (admin only)
 - `POST /api/admin/ai-prompts/restore-default` - Restore prompt to default (admin only)
@@ -124,7 +141,7 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 ## Database
 - PostgreSQL with Drizzle ORM
 - Push schema: `npm run db:push`
-- Tables: users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research_cache, system_settings
+- Tables: users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research, system_settings
 - Unique index: (pipeline_type, place_id) WHERE place_id IS NOT NULL
 
 ## Running

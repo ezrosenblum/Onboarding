@@ -10,7 +10,7 @@ import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, emailTem
 import type { InsertLead, CallOutcome, EmailTemplateType } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { buildEmailContent, sendEmail, getDefaultTemplates } from "./email-service";
-import { generateOpenerScript, getDefaultAiPrompt, isAiConfigured } from "./services/aiProvider";
+import { generateStructuredResearch, getDefaultAiPrompt, isAiConfigured, buildFinalPrompt } from "./services/aiProvider";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -285,7 +285,7 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Not authorized to log calls for this lead" });
     }
 
-    const { outcome, notes, durationSeconds } = req.body;
+    const { outcome, notes, durationSeconds, withinBadTimingWindow } = req.body;
     if (!outcome) return res.status(400).json({ message: "Outcome is required" });
     if (!(callOutcomeEnum as readonly string[]).includes(outcome)) {
       return res.status(400).json({ message: "Invalid outcome" });
@@ -327,7 +327,7 @@ export async function registerRoutes(
         outcome: typedOutcome,
         notes: notes || null,
         durationSeconds: durationSeconds || null,
-        withinBadTimingWindow: false,
+        withinBadTimingWindow: withinBadTimingWindow === true,
       }).returning();
 
       await tx.update(leads).set(leadUpdate).where(eq(leads.id, leadId));
@@ -621,13 +621,14 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const cache = await storage.getAiResearchCache(leadId);
+    const current = await storage.getCurrentAiResearch(leadId);
     const prompt = await storage.getAiPrompt(lead.pipelineType);
     const currentVersion = prompt?.version ?? 0;
-    const isStale = cache ? cache.promptVersion < currentVersion : false;
+    const isStale = current ? current.promptVersion < currentVersion : false;
 
     res.json({
-      cache: cache || null,
+      exists: !!current,
+      current: current || null,
       isStale,
       currentPromptVersion: currentVersion,
       aiConfigured: isAiConfigured(),
@@ -645,34 +646,52 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Not authorized" });
     }
 
+    const force = req.body.force === true;
+
+    const existing = await storage.getCurrentAiResearch(leadId);
+    if (existing && !force) {
+      const prompt = await storage.getAiPrompt(lead.pipelineType);
+      const currentVersion = prompt?.version ?? 0;
+      return res.json({
+        exists: true,
+        current: existing,
+        isStale: existing.promptVersion < currentVersion,
+        currentPromptVersion: currentVersion,
+        aiConfigured: isAiConfigured(),
+        mock: false,
+      });
+    }
+
     const prompt = await storage.getAiPrompt(lead.pipelineType);
     const promptTemplate = prompt?.promptTemplate ?? getDefaultAiPrompt();
     const promptVersion = prompt?.version ?? 0;
 
     try {
-      const result = await generateOpenerScript(promptTemplate, lead);
+      const result = await generateStructuredResearch(promptTemplate, lead);
 
-      const cached = await storage.upsertAiResearchCache({
+      await storage.markPreviousAiResearchNotCurrent(leadId);
+
+      const record = await storage.createAiResearch({
         leadId,
         pipelineType: lead.pipelineType,
         promptVersion,
-        promptTextSnapshot: promptTemplate,
-        resultText: result.text,
-        model: result.model,
-        tokensIn: result.tokensIn,
-        tokensOut: result.tokensOut,
+        promptUsed: result.promptUsed,
+        modelUsed: result.modelUsed,
+        outputJson: result.outputJson,
+        openerScript: result.openerScript,
         createdByUserId: req.user!.id,
       });
 
       res.json({
-        cache: cached,
+        exists: true,
+        current: record,
         isStale: false,
         currentPromptVersion: promptVersion,
         aiConfigured: isAiConfigured(),
         mock: result.mock,
       });
     } catch (err: any) {
-      console.error("[AI] Error generating opener:", err);
+      console.error("[AI] Error generating research:", err);
       res.status(500).json({ message: "AI generation failed: " + (err.message || "Unknown error") });
     }
   });

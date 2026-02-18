@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { eq, and, isNull, ilike, sql, desc, asc, lte, gte } from "drizzle-orm";
-import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearchCache, systemSettings } from "@shared/schema";
-import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchCache, SystemSetting } from "@shared/schema";
+import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearch, systemSettings } from "@shared/schema";
+import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchRecord, AiOutputJson, SystemSetting } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
 export interface IStorage {
@@ -51,8 +51,10 @@ export interface IStorage {
   getAllAiPrompts(): Promise<AiPrompt[]>;
   upsertAiPrompt(pipelineType: string, promptTemplate: string, userId: number): Promise<AiPrompt>;
 
-  getAiResearchCache(leadId: number): Promise<AiResearchCache | undefined>;
-  upsertAiResearchCache(data: Omit<AiResearchCache, "id" | "createdAt" | "updatedAt">): Promise<AiResearchCache>;
+  getCurrentAiResearch(leadId: number): Promise<AiResearchRecord | undefined>;
+  createAiResearch(data: { leadId: number; pipelineType: string; promptVersion: number; promptUsed: string; modelUsed: string | null; outputJson: AiOutputJson; openerScript: string; createdByUserId: number }): Promise<AiResearchRecord>;
+  markPreviousAiResearchNotCurrent(leadId: number): Promise<void>;
+  getAiResearchHistory(leadId: number): Promise<AiResearchRecord[]>;
 
   getSetting(key: string): Promise<string | undefined>;
 }
@@ -362,26 +364,37 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getAiResearchCache(leadId: number): Promise<AiResearchCache | undefined> {
-    const [cache] = await db.select().from(aiResearchCache)
-      .where(eq(aiResearchCache.leadId, leadId));
-    return cache;
+  async getCurrentAiResearch(leadId: number): Promise<AiResearchRecord | undefined> {
+    const [record] = await db.select().from(aiResearch)
+      .where(and(eq(aiResearch.leadId, leadId), eq(aiResearch.isCurrent, true)));
+    return record;
   }
 
-  async upsertAiResearchCache(data: Omit<AiResearchCache, "id" | "createdAt" | "updatedAt">): Promise<AiResearchCache> {
-    const existing = await this.getAiResearchCache(data.leadId);
-    if (existing) {
-      const [updated] = await db.update(aiResearchCache)
-        .set({
-          ...data,
-          updatedAt: new Date(),
-        })
-        .where(eq(aiResearchCache.id, existing.id))
-        .returning();
-      return updated;
-    }
-    const [created] = await db.insert(aiResearchCache).values(data as any).returning();
-    return created;
+  async createAiResearch(data: { leadId: number; pipelineType: string; promptVersion: number; promptUsed: string; modelUsed: string | null; outputJson: AiOutputJson; openerScript: string; createdByUserId: number }): Promise<AiResearchRecord> {
+    const [record] = await db.insert(aiResearch).values({
+      leadId: data.leadId,
+      pipelineType: data.pipelineType as any,
+      promptVersion: data.promptVersion,
+      promptUsed: data.promptUsed,
+      modelUsed: data.modelUsed,
+      outputJson: data.outputJson,
+      openerScript: data.openerScript,
+      createdByUserId: data.createdByUserId,
+      isCurrent: true,
+    }).returning();
+    return record;
+  }
+
+  async markPreviousAiResearchNotCurrent(leadId: number): Promise<void> {
+    await db.update(aiResearch)
+      .set({ isCurrent: false })
+      .where(and(eq(aiResearch.leadId, leadId), eq(aiResearch.isCurrent, true)));
+  }
+
+  async getAiResearchHistory(leadId: number): Promise<AiResearchRecord[]> {
+    return db.select().from(aiResearch)
+      .where(eq(aiResearch.leadId, leadId))
+      .orderBy(desc(aiResearch.createdAt));
   }
 
   async getSetting(key: string): Promise<string | undefined> {

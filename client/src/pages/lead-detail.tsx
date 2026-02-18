@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
-import type { Lead, CallLog, LeadNote, EmailLog, AiResearchCache } from "@shared/schema";
+import type { Lead, CallLog, LeadNote, EmailLog, AiResearchRecord, AiOutputJson } from "@shared/schema";
 import { callOutcomeEnum } from "@shared/schema";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -17,7 +17,8 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Building2, Phone, Mail, MapPin, Globe, Star, MessageSquare,
   Clock, Save, Plus, Loader2, ArrowLeft, ExternalLink, PhoneCall,
-  Send, AlertCircle, Sparkles, RefreshCw, AlertTriangle
+  Send, AlertCircle, Sparkles, RefreshCw, AlertTriangle, Copy,
+  CheckCircle2, ListChecks, HelpCircle, Shield, ArrowRight
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
@@ -30,7 +31,8 @@ interface EmailEligibility {
 }
 
 interface AiResearchResponse {
-  cache: AiResearchCache | null;
+  exists: boolean;
+  current: AiResearchRecord | null;
   isStale: boolean;
   currentPromptVersion: number;
   aiConfigured: boolean;
@@ -58,6 +60,7 @@ export default function LeadDetailPage() {
   const [callOutcome, setCallOutcome] = useState("NO_ANSWER");
   const [callNotes, setCallNotes] = useState("");
   const [callDuration, setCallDuration] = useState("");
+  const [aiDetailTab, setAiDetailTab] = useState("opener");
 
   useEffect(() => {
     if (lead) {
@@ -133,8 +136,8 @@ export default function LeadDetailPage() {
   });
 
   const generateAiMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/leads/${leadId}/ai-research`);
+    mutationFn: async (force: boolean = true) => {
+      const res = await apiRequest("POST", `/api/leads/${leadId}/ai-research`, { force });
       return res.json();
     },
     onSuccess: (result: AiResearchResponse) => {
@@ -142,7 +145,7 @@ export default function LeadDetailPage() {
       if (result.mock) {
         toast({ title: "Mock script generated", description: "AI not configured - using placeholder" });
       } else {
-        toast({ title: "AI opener script generated" });
+        toast({ title: "AI research generated" });
       }
     },
     onError: (err: any) => {
@@ -178,6 +181,8 @@ export default function LeadDetailPage() {
     );
   }
 
+  const outputJson = aiResearch?.current?.outputJson as AiOutputJson | undefined;
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-3 flex-wrap">
@@ -204,7 +209,7 @@ export default function LeadDetailPage() {
           <TabsTrigger value="calls" data-testid="tab-calls">Call Logs</TabsTrigger>
           <TabsTrigger value="emails" data-testid="tab-emails">Emails</TabsTrigger>
           <TabsTrigger value="notes" data-testid="tab-notes">Notes</TabsTrigger>
-          <TabsTrigger value="ai" data-testid="tab-ai">AI Script</TabsTrigger>
+          <TabsTrigger value="ai" data-testid="tab-ai">AI Call Prep</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4 mt-4">
@@ -327,6 +332,7 @@ export default function LeadDetailPage() {
                         <div className="flex items-center gap-2 flex-wrap">
                           <Badge variant="outline" className="text-xs">{log.outcome.replace(/_/g, " ")}</Badge>
                           {log.durationSeconds && <span className="text-xs text-muted-foreground">{log.durationSeconds}s</span>}
+                          {log.withinBadTimingWindow && <Badge variant="secondary" className="text-xs">Bad Timing</Badge>}
                         </div>
                         {log.notes && <p className="text-sm mt-1">{log.notes}</p>}
                         <p className="text-xs text-muted-foreground mt-1">{format(new Date(log.calledAt), "MMM d, yyyy h:mm a")}</p>
@@ -452,68 +458,112 @@ export default function LeadDetailPage() {
         <TabsContent value="ai" className="space-y-4 mt-4">
           <Card>
             <CardHeader className="pb-3">
-              <h3 className="font-semibold flex items-center gap-2"><Sparkles className="h-4 w-4" /> AI Opener Script</h3>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h3 className="font-semibold flex items-center gap-2"><Sparkles className="h-4 w-4" /> AI Call Prep</h3>
+                {aiResearch?.exists && canEdit && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => generateAiMutation.mutate(true)}
+                    disabled={generateAiMutation.isPending}
+                    data-testid="button-regenerate-ai-detail"
+                  >
+                    {generateAiMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                    Regenerate
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               {aiLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" /> Loading AI research...
                 </div>
-              ) : aiResearch?.cache ? (
+              ) : aiResearch?.exists && aiResearch.current && outputJson ? (
                 <>
                   {aiResearch.isStale && (
                     <div className="flex items-center gap-2 rounded-md bg-muted p-3">
                       <AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0" />
                       <p className="text-sm text-muted-foreground">
-                        The AI prompt has been updated since this script was generated. Consider regenerating for the latest version.
+                        The AI prompt has been updated since this was generated. Consider regenerating.
                       </p>
                     </div>
                   )}
-                  <div className="rounded-md bg-muted p-4">
-                    <p className="text-sm whitespace-pre-wrap leading-relaxed" data-testid="text-ai-script-detail">
-                      {aiResearch.cache.resultText}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => generateAiMutation.mutate()}
-                      disabled={generateAiMutation.isPending}
-                      data-testid="button-regenerate-ai-detail"
-                    >
-                      {generateAiMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-                      Regenerate
-                    </Button>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-                      <span>Prompt v{aiResearch.cache.promptVersion}</span>
-                      <span>&middot;</span>
-                      <span>Model: {aiResearch.cache.model}</span>
-                      {aiResearch.cache.tokensIn != null && aiResearch.cache.tokensOut != null && (
-                        <>
-                          <span>&middot;</span>
-                          <span>{aiResearch.cache.tokensIn + aiResearch.cache.tokensOut} tokens</span>
-                        </>
+
+                  <Tabs value={aiDetailTab} onValueChange={setAiDetailTab}>
+                    <TabsList>
+                      <TabsTrigger value="opener" data-testid="tab-ai-opener">Opener Script</TabsTrigger>
+                      <TabsTrigger value="details" data-testid="tab-ai-details">More Details</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value="opener" className="mt-3">
+                      <OpenerScriptCard script={aiResearch.current.openerScript} />
+                    </TabsContent>
+
+                    <TabsContent value="details" className="mt-3 space-y-4">
+                      {outputJson.summary_bullets?.length > 0 && (
+                        <DetailSection icon={<ListChecks className="h-4 w-4" />} title="Key Facts">
+                          <ul className="space-y-1.5">
+                            {outputJson.summary_bullets.map((b, i) => (
+                              <li key={i} className="text-sm flex items-start gap-2">
+                                <span className="text-muted-foreground mt-0.5 shrink-0">-</span>
+                                <span>{b}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </DetailSection>
                       )}
-                      <span>&middot;</span>
-                      <span>{format(new Date(aiResearch.cache.createdAt), "MMM d, yyyy h:mm a")}</span>
-                    </div>
+
+                      {outputJson.discovery_questions?.length > 0 && (
+                        <DetailSection icon={<HelpCircle className="h-4 w-4" />} title="Discovery Questions">
+                          <ol className="space-y-1.5 list-decimal list-inside">
+                            {outputJson.discovery_questions.map((q, i) => (
+                              <li key={i} className="text-sm">{q}</li>
+                            ))}
+                          </ol>
+                        </DetailSection>
+                      )}
+
+                      {outputJson.objections?.length > 0 && (
+                        <DetailSection icon={<Shield className="h-4 w-4" />} title="Objection Handling">
+                          <ul className="space-y-2">
+                            {outputJson.objections.map((o, i) => (
+                              <li key={i} className="text-sm">{o}</li>
+                            ))}
+                          </ul>
+                        </DetailSection>
+                      )}
+
+                      {outputJson.suggested_next_step && (
+                        <DetailSection icon={<ArrowRight className="h-4 w-4" />} title="Suggested Next Step">
+                          <p className="text-sm">{outputJson.suggested_next_step}</p>
+                        </DetailSection>
+                      )}
+                    </TabsContent>
+                  </Tabs>
+
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap pt-2 border-t">
+                    <span>Prompt v{aiResearch.current.promptVersion}</span>
+                    <span>&middot;</span>
+                    <span>Model: {aiResearch.current.modelUsed || "unknown"}</span>
+                    <span>&middot;</span>
+                    <span>{format(new Date(aiResearch.current.createdAt), "MMM d, yyyy h:mm a")}</span>
                   </div>
                 </>
               ) : (
                 <div className="text-center py-4">
                   <Sparkles className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
                   <p className="text-sm text-muted-foreground mb-3">
-                    No AI opener script generated for this lead yet.
+                    No AI research generated for this lead yet.
                   </p>
                   {canEdit && (
                     <Button
-                      onClick={() => generateAiMutation.mutate()}
+                      onClick={() => generateAiMutation.mutate(true)}
                       disabled={generateAiMutation.isPending}
                       data-testid="button-generate-ai-detail"
                     >
                       {generateAiMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                      Generate Opener Script
+                      Run AI Research
                     </Button>
                   )}
                 </div>
@@ -522,6 +572,48 @@ export default function LeadDetailPage() {
           </Card>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function OpenerScriptCard({ script }: { script: string }) {
+  const [copied, setCopied] = useState(false);
+  const { toast } = useToast();
+
+  function handleCopy() {
+    navigator.clipboard.writeText(script).then(() => {
+      setCopied(true);
+      toast({ title: "Copied to clipboard" });
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div className="relative rounded-md bg-muted p-4">
+      <Button
+        size="icon"
+        variant="ghost"
+        className="absolute top-2 right-2"
+        onClick={handleCopy}
+        data-testid="button-copy-opener"
+      >
+        {copied ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+      </Button>
+      <p className="text-sm whitespace-pre-wrap leading-relaxed pr-10" data-testid="text-ai-opener-script-detail">
+        {script}
+      </p>
+    </div>
+  );
+}
+
+function DetailSection({ icon, title, children }: { icon: any; title: string; children: any }) {
+  return (
+    <div className="rounded-md bg-muted p-4 space-y-2">
+      <h4 className="text-sm font-medium flex items-center gap-2">
+        <span className="text-muted-foreground">{icon}</span>
+        {title}
+      </h4>
+      {children}
     </div>
   );
 }

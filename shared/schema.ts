@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, numeric, index, uniqueIndex, json } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, numeric, index, uniqueIndex, json, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -34,6 +34,14 @@ export type SignupStatus = (typeof signupStatusEnum)[number];
 
 export const pipelineTypeEnum = ["vendor", "buyer"] as const;
 export type PipelineType = (typeof pipelineTypeEnum)[number];
+
+export interface AiOutputJson {
+  opener_script: string;
+  summary_bullets: string[];
+  discovery_questions: string[];
+  objections: string[];
+  suggested_next_step: string;
+}
 
 export const users = pgTable("users", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -156,21 +164,20 @@ export const aiPrompts = pgTable("ai_prompts", {
   uniqueIndex("ai_prompts_pipeline_unique").on(table.pipelineType),
 ]);
 
-export const aiResearchCache = pgTable("ai_research_cache", {
+export const aiResearch = pgTable("ai_research", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   leadId: integer("lead_id").notNull().references(() => leads.id),
   pipelineType: text("pipeline_type").notNull().$type<PipelineType>(),
   promptVersion: integer("prompt_version").notNull(),
-  promptTextSnapshot: text("prompt_text_snapshot").notNull(),
-  resultText: text("result_text").notNull(),
-  model: text("model").notNull(),
-  tokensIn: integer("tokens_in"),
-  tokensOut: integer("tokens_out"),
+  promptUsed: text("prompt_used").notNull(),
+  modelUsed: text("model_used"),
+  outputJson: jsonb("output_json").notNull().$type<AiOutputJson>(),
+  openerScript: text("opener_script").notNull(),
   createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  isCurrent: boolean("is_current").notNull().default(true),
 }, (table) => [
-  uniqueIndex("ai_research_cache_lead_unique").on(table.leadId),
+  index("ai_research_lead_id_idx").on(table.leadId),
 ]);
 
 export const systemSettings = pgTable("system_settings", {
@@ -212,9 +219,9 @@ export const insertAiPromptSchema = createInsertSchema(aiPrompts).omit({ id: tru
 export type InsertAiPrompt = z.infer<typeof insertAiPromptSchema>;
 export type AiPrompt = typeof aiPrompts.$inferSelect;
 
-export const insertAiResearchCacheSchema = createInsertSchema(aiResearchCache).omit({ id: true, createdAt: true, updatedAt: true });
-export type InsertAiResearchCache = z.infer<typeof insertAiResearchCacheSchema>;
-export type AiResearchCache = typeof aiResearchCache.$inferSelect;
+export const insertAiResearchSchema = createInsertSchema(aiResearch).omit({ id: true, createdAt: true });
+export type InsertAiResearch = z.infer<typeof insertAiResearchSchema>;
+export type AiResearchRecord = typeof aiResearch.$inferSelect;
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
 
