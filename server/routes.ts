@@ -818,11 +818,14 @@ export async function registerRoutes(
       return res.status(404).json({ message: "Lead not found" });
     }
 
+    const signedUpAt = req.body.signedUpAt ? new Date(req.body.signedUpAt) : new Date();
+    const signedUpEmail = req.body.email || lead.confirmedEmail || lead.scrapedEmail || null;
+
     await storage.createSignupEvent({
       leadId: lead.id,
       leadToken: lead.leadToken,
       eventType: "admin_manual",
-      payloadRaw: { markedBy: req.user!.id, note: req.body.note || null },
+      payloadRaw: { markedBy: req.user!.id, email: signedUpEmail, signedUpAt: signedUpAt.toISOString(), note: req.body.note || null },
       sourceIp: null,
       userAgent: null,
       idempotencyKey: null,
@@ -830,8 +833,8 @@ export async function registerRoutes(
 
     await storage.updateLead(lead.id, {
       statusSignup: "SIGNED_UP",
-      signedUpAt: new Date(),
-      signedUpEmail: req.body.email || lead.confirmedEmail || lead.scrapedEmail || null,
+      signedUpAt,
+      signedUpEmail,
       signedUpUserId: null,
       signupSource: "admin_manual",
     });

@@ -15,6 +15,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Label } from "@/components/ui/label";
+import {
   Building2, Phone, Mail, MapPin, Globe, Star, MessageSquare,
   Clock, Save, Plus, Loader2, ArrowLeft, ExternalLink, PhoneCall,
   Send, AlertCircle, Sparkles, RefreshCw, AlertTriangle, Copy,
@@ -153,13 +159,22 @@ export default function LeadDetailPage() {
     },
   });
 
+  const [markSignupDialogOpen, setMarkSignupDialogOpen] = useState(false);
+  const [markSignupEmail, setMarkSignupEmail] = useState("");
+  const [markSignupDate, setMarkSignupDate] = useState("");
+
   const markSignedUpMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", `/api/admin/leads/${leadId}/mark-signed-up`, {});
+    mutationFn: async (body: { email?: string; signedUpAt?: string }) => {
+      await apiRequest("POST", `/api/admin/leads/${leadId}/mark-signed-up`, body);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/metrics/signups"], exact: false });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/my"] });
+      setMarkSignupDialogOpen(false);
+      setMarkSignupEmail("");
+      setMarkSignupDate("");
       toast({ title: "Lead marked as signed up" });
     },
     onError: (err: any) => {
@@ -313,16 +328,65 @@ export default function LeadDetailPage() {
                 </p>
               )}
               {user?.role === "admin" && lead.statusSignup !== "SIGNED_UP" && (
-                <Button
-                  variant="outline"
-                  className="mt-3"
-                  onClick={() => markSignedUpMutation.mutate()}
-                  disabled={markSignedUpMutation.isPending}
-                  data-testid="button-mark-signed-up"
-                >
-                  {markSignedUpMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                  Mark as Signed Up
-                </Button>
+                <AlertDialog open={markSignupDialogOpen} onOpenChange={setMarkSignupDialogOpen}>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="mt-3"
+                      data-testid="button-mark-signed-up"
+                    >
+                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      Mark as Signed Up
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Mark Lead as Signed Up</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        This will mark <strong>{lead.companyName}</strong> as signed up. This action records an audit event and cannot be undone.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <div className="space-y-4 py-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="signup-email">Signup Email (optional)</Label>
+                        <Input
+                          id="signup-email"
+                          type="email"
+                          placeholder={lead.confirmedEmail || lead.scrapedEmail || "email@example.com"}
+                          value={markSignupEmail}
+                          onChange={(e) => setMarkSignupEmail(e.target.value)}
+                          data-testid="input-signup-email"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="signup-date">Signup Date (optional)</Label>
+                        <Input
+                          id="signup-date"
+                          type="datetime-local"
+                          value={markSignupDate}
+                          onChange={(e) => setMarkSignupDate(e.target.value)}
+                          data-testid="input-signup-date"
+                        />
+                      </div>
+                    </div>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel data-testid="button-cancel-signup">Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => {
+                          const body: { email?: string; signedUpAt?: string } = {};
+                          if (markSignupEmail.trim()) body.email = markSignupEmail.trim();
+                          if (markSignupDate) body.signedUpAt = new Date(markSignupDate).toISOString();
+                          markSignedUpMutation.mutate(body);
+                        }}
+                        disabled={markSignedUpMutation.isPending}
+                        data-testid="button-confirm-signup"
+                      >
+                        {markSignedUpMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                        Confirm
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               )}
             </CardContent>
           </Card>
