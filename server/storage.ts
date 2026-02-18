@@ -13,6 +13,10 @@ export interface CallerPerformance {
   emailsClicked: number;
   emailsBounced: number;
   signups: number;
+  unreachableCount: number;
+  avgAttemptsPerLead: number;
+  callToEmailPct: number;
+  clickToSignupPct: number;
 }
 
 export interface PerformanceMetrics {
@@ -29,8 +33,17 @@ export interface PerformanceMetrics {
     emailOpenPct: number;
     emailClickPct: number;
     clickToSignupPct: number;
+    callToSignupPct: number;
   };
   byCaller: CallerPerformance[];
+  signupsByState: { state: string; count: number }[];
+  signupsByCategory: { category: string; count: number }[];
+  callTimingAnalysis: {
+    badTimingCalls: number;
+    totalCalls: number;
+    badTimingNoAnswerRate: number;
+    bestHours: { hour: number; calls: number; connectRate: number }[];
+  };
 }
 
 export interface IStorage {
@@ -65,6 +78,7 @@ export interface IStorage {
   getEmailLogsByLeadId(leadId: number): Promise<EmailLog[]>;
   getEmailLogByMessageId(messageId: string): Promise<EmailLog | undefined>;
   getEmailsSentTodayByUserId(userId: number): Promise<number>;
+  getCallerWeeklyStats(userId: number): Promise<{ callsThisWeek: number; emailsThisWeek: number; signupsThisWeek: number }>;
   hasEmailLogForLead(leadId: number, templateType: string): Promise<boolean>;
 
   createEmailEvent(data: InsertEmailEvent): Promise<EmailEvent>;
@@ -331,6 +345,31 @@ export class DatabaseStorage implements IStorage {
     return Number(result[0].count);
   }
 
+  async getCallerWeeklyStats(userId: number): Promise<{ callsThisWeek: number; emailsThisWeek: number; signupsThisWeek: number }> {
+    const now = new Date();
+    const day = now.getDay();
+    const weekStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
+
+    const [callResult, emailResult, signupResult] = await Promise.all([
+      db.select({ count: sql<number>`count(*)` }).from(callLogs)
+        .where(and(eq(callLogs.userId, userId), gte(callLogs.calledAt, weekStart))),
+      db.select({ count: sql<number>`count(*)` }).from(emailLogs)
+        .where(and(eq(emailLogs.userId, userId), gte(emailLogs.createdAt, weekStart))),
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(and(
+          eq(leads.assignedToUserId, userId),
+          eq(leads.statusSignup, "SIGNED_UP"),
+          gte(leads.signedUpAt, weekStart),
+        )),
+    ]);
+
+    return {
+      callsThisWeek: Number(callResult[0].count),
+      emailsThisWeek: Number(emailResult[0].count),
+      signupsThisWeek: Number(signupResult[0].count),
+    };
+  }
+
   async hasEmailLogForLead(leadId: number, templateType: string): Promise<boolean> {
     const result = await db.select({ count: sql<number>`count(*)` }).from(emailLogs)
       .where(and(
@@ -559,7 +598,7 @@ export class DatabaseStorage implements IStorage {
       startDate = new Date(now.getFullYear(), now.getMonth(), 1);
     }
 
-    const [callRows, emailRows, eventRows, signupRows] = await Promise.all([
+    const [callRows, emailRows, eventRows, signupRows, unreachableRows, avgAttemptsRows, signupsByStateRows, signupsByCategoryRows, timingRows, hourlyRows] = await Promise.all([
       db.select({
         userId: callLogs.userId,
         userName: users.name,
@@ -596,12 +635,70 @@ export class DatabaseStorage implements IStorage {
           gte(leads.signedUpAt, startDate)
         ))
         .groupBy(leads.assignedToUserId, users.name),
+
+      db.select({
+        userId: leads.assignedToUserId,
+        cnt: count(leads.id),
+      }).from(leads)
+        .where(and(
+          eq(leads.unreachable, true),
+          eq(leads.pipelineType, "vendor"),
+        ))
+        .groupBy(leads.assignedToUserId),
+
+      db.select({
+        userId: leads.assignedToUserId,
+        avgAttempts: sql<number>`ROUND(AVG(${leads.attemptCount})::numeric, 1)`,
+      }).from(leads)
+        .where(and(
+          eq(leads.pipelineType, "vendor"),
+          sql`${leads.assignedToUserId} IS NOT NULL`,
+          sql`${leads.attemptCount} > 0`,
+        ))
+        .groupBy(leads.assignedToUserId),
+
+      db.select({
+        state: leads.state,
+        cnt: count(leads.id),
+      }).from(leads)
+        .where(and(
+          eq(leads.statusSignup, "SIGNED_UP"),
+          gte(leads.signedUpAt, startDate),
+          sql`${leads.state} IS NOT NULL AND ${leads.state} != ''`,
+        ))
+        .groupBy(leads.state),
+
+      db.select({
+        category: leads.categoryKeyword,
+        cnt: count(leads.id),
+      }).from(leads)
+        .where(and(
+          eq(leads.statusSignup, "SIGNED_UP"),
+          gte(leads.signedUpAt, startDate),
+          sql`${leads.categoryKeyword} IS NOT NULL AND ${leads.categoryKeyword} != ''`,
+        ))
+        .groupBy(leads.categoryKeyword),
+
+      db.select({
+        badTimingTotal: sql<number>`COUNT(*) FILTER (WHERE ${callLogs.withinBadTimingWindow} = true)`,
+        badTimingNoAnswer: sql<number>`COUNT(*) FILTER (WHERE ${callLogs.withinBadTimingWindow} = true AND ${callLogs.outcome} = 'NO_ANSWER')`,
+        totalCalls: count(callLogs.id),
+      }).from(callLogs)
+        .where(gte(callLogs.calledAt, startDate)),
+
+      db.select({
+        hour: sql<number>`EXTRACT(HOUR FROM ${callLogs.calledAt})::int`,
+        calls: count(callLogs.id),
+        connects: sql<number>`COUNT(*) FILTER (WHERE ${callLogs.outcome} LIKE 'SPOKE_%')`,
+      }).from(callLogs)
+        .where(gte(callLogs.calledAt, startDate))
+        .groupBy(sql`EXTRACT(HOUR FROM ${callLogs.calledAt})::int`),
     ]);
 
     const callerMap = new Map<number, CallerPerformance>();
     const getOrCreate = (userId: number, userName: string): CallerPerformance => {
       if (!callerMap.has(userId)) {
-        callerMap.set(userId, { userId, userName, callsMade: 0, emailsSent: 0, emailsOpened: 0, emailsClicked: 0, emailsBounced: 0, signups: 0 });
+        callerMap.set(userId, { userId, userName, callsMade: 0, emailsSent: 0, emailsOpened: 0, emailsClicked: 0, emailsBounced: 0, signups: 0, unreachableCount: 0, avgAttemptsPerLead: 0, callToEmailPct: 0, clickToSignupPct: 0 });
       }
       return callerMap.get(userId)!;
     };
@@ -634,7 +731,46 @@ export class DatabaseStorage implements IStorage {
       if (row.userId) getOrCreate(row.userId, row.userName || "Unknown").signups = c;
     }
 
+    for (const row of unreachableRows) {
+      if (row.userId) {
+        const caller = callerMap.get(row.userId);
+        if (caller) caller.unreachableCount = Number(row.cnt);
+      }
+    }
+
+    for (const row of avgAttemptsRows) {
+      if (row.userId) {
+        const caller = callerMap.get(row.userId);
+        if (caller) caller.avgAttemptsPerLead = Number(row.avgAttempts);
+      }
+    }
+
+    for (const caller of callerMap.values()) {
+      caller.callToEmailPct = caller.callsMade > 0 ? Math.round((caller.emailsSent / caller.callsMade) * 1000) / 10 : 0;
+      caller.clickToSignupPct = caller.emailsClicked > 0 ? Math.round((caller.signups / caller.emailsClicked) * 1000) / 10 : 0;
+    }
+
     const byCaller = Array.from(callerMap.values()).sort((a, b) => b.callsMade - a.callsMade);
+
+    const signupsByState = signupsByStateRows
+      .map(r => ({ state: r.state || "Unknown", count: Number(r.cnt) }))
+      .sort((a, b) => b.count - a.count);
+
+    const signupsByCategory = signupsByCategoryRows
+      .map(r => ({ category: r.category || "Unknown", count: Number(r.cnt) }))
+      .sort((a, b) => b.count - a.count);
+
+    const timingData = timingRows[0] || { badTimingTotal: 0, badTimingNoAnswer: 0, totalCalls: 0 };
+    const badTimingCalls = Number(timingData.badTimingTotal);
+    const badTimingNoAnswer = Number(timingData.badTimingNoAnswer);
+
+    const bestHours = hourlyRows
+      .map(r => ({
+        hour: Number(r.hour),
+        calls: Number(r.calls),
+        connectRate: Number(r.calls) > 0 ? Math.round((Number(r.connects) / Number(r.calls)) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.connectRate - a.connectRate);
 
     return {
       totals: {
@@ -650,8 +786,17 @@ export class DatabaseStorage implements IStorage {
         emailOpenPct: totalEmails > 0 ? Math.round((totalOpened / totalEmails) * 1000) / 10 : 0,
         emailClickPct: totalEmails > 0 ? Math.round((totalClicked / totalEmails) * 1000) / 10 : 0,
         clickToSignupPct: totalClicked > 0 ? Math.round((totalSignups / totalClicked) * 1000) / 10 : 0,
+        callToSignupPct: totalCalls > 0 ? Math.round((totalSignups / totalCalls) * 1000) / 10 : 0,
       },
       byCaller,
+      signupsByState,
+      signupsByCategory,
+      callTimingAnalysis: {
+        badTimingCalls,
+        totalCalls,
+        badTimingNoAnswerRate: badTimingCalls > 0 ? Math.round((badTimingNoAnswer / badTimingCalls) * 1000) / 10 : 0,
+        bestHours,
+      },
     };
   }
 

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Activity, Phone, Mail, MousePointerClick, Eye, UserCheck, TrendingUp, ArrowRight, AlertTriangle } from "lucide-react";
+import { Activity, Phone, Mail, MousePointerClick, Eye, UserCheck, TrendingUp, ArrowRight, AlertTriangle, Clock, MapPin, Tag } from "lucide-react";
 import { useState } from "react";
 
 interface CallerPerformance {
@@ -15,6 +15,10 @@ interface CallerPerformance {
   emailsClicked: number;
   emailsBounced: number;
   signups: number;
+  unreachableCount: number;
+  avgAttemptsPerLead: number;
+  callToEmailPct: number;
+  clickToSignupPct: number;
 }
 
 interface PerformanceMetrics {
@@ -31,8 +35,17 @@ interface PerformanceMetrics {
     emailOpenPct: number;
     emailClickPct: number;
     clickToSignupPct: number;
+    callToSignupPct: number;
   };
   byCaller: CallerPerformance[];
+  signupsByState: { state: string; count: number }[];
+  signupsByCategory: { category: string; count: number }[];
+  callTimingAnalysis: {
+    badTimingCalls: number;
+    totalCalls: number;
+    badTimingNoAnswerRate: number;
+    bestHours: { hour: number; calls: number; connectRate: number }[];
+  };
 }
 
 function StatCard({ icon: Icon, label, value, subtext, testId }: {
@@ -60,15 +73,11 @@ function StatCard({ icon: Icon, label, value, subtext, testId }: {
   );
 }
 
-function RateCard({ label, value, testId }: { label: string; value: number; testId: string }) {
-  return (
-    <Card>
-      <CardContent className="p-4 text-center">
-        <p className="text-xs text-muted-foreground mb-1">{label}</p>
-        <p className="text-2xl font-bold" data-testid={testId}>{value}%</p>
-      </CardContent>
-    </Card>
-  );
+function formatHour(hour: number): string {
+  if (hour === 0) return "12 AM";
+  if (hour < 12) return `${hour} AM`;
+  if (hour === 12) return "12 PM";
+  return `${hour - 12} PM`;
 }
 
 export default function PerformanceDashboardPage() {
@@ -80,7 +89,7 @@ export default function PerformanceDashboardPage() {
   });
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-xl font-bold flex items-center gap-2" data-testid="text-dashboard-title">
           <Activity className="h-5 w-5" /> Performance Dashboard
@@ -109,7 +118,7 @@ export default function PerformanceDashboardPage() {
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             <StatCard icon={Phone} label={`Calls ${rangeLabel}`} value={metrics.totals.calls} testId="text-total-calls" />
-            <StatCard icon={Mail} label={`Emails Sent`} value={metrics.totals.emails} testId="text-total-emails" />
+            <StatCard icon={Mail} label="Emails Sent" value={metrics.totals.emails} testId="text-total-emails" />
             <StatCard icon={Eye} label="Emails Opened" value={metrics.totals.emailsOpened} testId="text-total-opened" />
             <StatCard icon={MousePointerClick} label="Emails Clicked" value={metrics.totals.emailsClicked} testId="text-total-clicked" />
             <StatCard icon={AlertTriangle} label="Emails Bounced" value={metrics.totals.emailsBounced} testId="text-total-bounced" />
@@ -123,11 +132,18 @@ export default function PerformanceDashboardPage() {
               </h3>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <RateCard label="Call → Email" value={metrics.rates.callToEmailPct} testId="rate-call-to-email" />
-                <RateCard label="Email Open %" value={metrics.rates.emailOpenPct} testId="rate-email-open" />
-                <RateCard label="Email Click %" value={metrics.rates.emailClickPct} testId="rate-email-click" />
-                <RateCard label="Click → Signup" value={metrics.rates.clickToSignupPct} testId="rate-click-to-signup" />
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                <FunnelStep label="Calls" value={metrics.totals.calls} />
+                <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                <FunnelStep label="Call→Email" value={`${metrics.rates.callToEmailPct}%`} />
+                <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                <FunnelStep label="Email→Open" value={`${metrics.rates.emailOpenPct}%`} />
+                <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                <FunnelStep label="Open→Click" value={`${metrics.rates.emailClickPct}%`} />
+                <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                <FunnelStep label="Click→Signup" value={`${metrics.rates.clickToSignupPct}%`} />
+                <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                <FunnelStep label="Call→Signup" value={`${metrics.rates.callToSignupPct}%`} highlight />
               </div>
             </CardContent>
           </Card>
@@ -135,7 +151,7 @@ export default function PerformanceDashboardPage() {
           <Card>
             <CardHeader className="pb-3">
               <h3 className="font-semibold flex items-center gap-2">
-                <Phone className="h-4 w-4" /> By Caller
+                <Phone className="h-4 w-4" /> Performance by Caller
               </h3>
             </CardHeader>
             <CardContent>
@@ -148,44 +164,159 @@ export default function PerformanceDashboardPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left">
-                        <th className="pb-2 pr-4 font-medium text-muted-foreground">Caller</th>
-                        <th className="pb-2 pr-4 font-medium text-muted-foreground text-right">Calls</th>
-                        <th className="pb-2 pr-4 font-medium text-muted-foreground text-right">Emails</th>
-                        <th className="pb-2 pr-4 font-medium text-muted-foreground text-right">Call→Email</th>
-                        <th className="pb-2 font-medium text-muted-foreground text-right">Signups</th>
+                        <th className="pb-2 pr-3 font-medium text-muted-foreground">Caller</th>
+                        <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Calls</th>
+                        <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Emails</th>
+                        <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Call→Email</th>
+                        <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Signups</th>
+                        <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Click→Signup</th>
+                        <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Unreachable</th>
+                        <th className="pb-2 font-medium text-muted-foreground text-right">Avg Attempts</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {metrics.byCaller.map((caller) => {
-                        const callerCallToEmail = caller.callsMade > 0
-                          ? Math.round((caller.emailsSent / caller.callsMade) * 1000) / 10
-                          : 0;
-                        return (
-                          <tr key={caller.userId} className="border-b last:border-b-0" data-testid={`row-perf-caller-${caller.userId}`}>
-                            <td className="py-3 pr-4 font-medium">{caller.userName}</td>
-                            <td className="py-3 pr-4 text-right">
-                              <Badge variant="outline">{caller.callsMade}</Badge>
-                            </td>
-                            <td className="py-3 pr-4 text-right">
-                              <Badge variant="outline">{caller.emailsSent}</Badge>
-                            </td>
-                            <td className="py-3 pr-4 text-right">
-                              <span className="text-muted-foreground">{callerCallToEmail}%</span>
-                            </td>
-                            <td className="py-3 text-right">
-                              <Badge>{caller.signups}</Badge>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                      {metrics.byCaller.map((caller) => (
+                        <tr key={caller.userId} className="border-b last:border-b-0" data-testid={`row-perf-caller-${caller.userId}`}>
+                          <td className="py-3 pr-3 font-medium">{caller.userName}</td>
+                          <td className="py-3 pr-3 text-right">
+                            <Badge variant="outline">{caller.callsMade}</Badge>
+                          </td>
+                          <td className="py-3 pr-3 text-right">
+                            <Badge variant="outline">{caller.emailsSent}</Badge>
+                          </td>
+                          <td className="py-3 pr-3 text-right text-muted-foreground">{caller.callToEmailPct}%</td>
+                          <td className="py-3 pr-3 text-right">
+                            <Badge>{caller.signups}</Badge>
+                          </td>
+                          <td className="py-3 pr-3 text-right text-muted-foreground">{caller.clickToSignupPct}%</td>
+                          <td className="py-3 pr-3 text-right text-muted-foreground">{caller.unreachableCount}</td>
+                          <td className="py-3 text-right text-muted-foreground">{caller.avgAttemptsPerLead}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
               )}
             </CardContent>
           </Card>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader className="pb-3">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <MapPin className="h-4 w-4" /> Signups by State
+                </h3>
+              </CardHeader>
+              <CardContent>
+                {metrics.signupsByState.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-state-signups">No signups in this period</p>
+                ) : (
+                  <div className="space-y-2">
+                    {metrics.signupsByState.map((item) => (
+                      <div key={item.state} className="flex items-center justify-between gap-2" data-testid={`row-signup-state-${item.state}`}>
+                        <span className="text-sm font-medium">{item.state}</span>
+                        <Badge variant="outline">{item.count}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <Tag className="h-4 w-4" /> Signups by Category
+                </h3>
+              </CardHeader>
+              <CardContent>
+                {metrics.signupsByCategory.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-category-signups">No signups in this period</p>
+                ) : (
+                  <div className="space-y-2">
+                    {metrics.signupsByCategory.map((item) => (
+                      <div key={item.category} className="flex items-center justify-between gap-2" data-testid={`row-signup-category-${item.category}`}>
+                        <span className="text-sm font-medium">{item.category}</span>
+                        <Badge variant="outline">{item.count}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <h3 className="font-semibold flex items-center gap-2">
+                <Clock className="h-4 w-4" /> Call Timing Analysis
+              </h3>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="text-center p-3 rounded-md bg-muted/50">
+                  <p className="text-xs text-muted-foreground mb-1">Bad Timing Calls</p>
+                  <p className="text-xl font-bold" data-testid="text-bad-timing-calls">
+                    {metrics.callTimingAnalysis.badTimingCalls}
+                    <span className="text-sm font-normal text-muted-foreground ml-1">
+                      / {metrics.callTimingAnalysis.totalCalls}
+                    </span>
+                  </p>
+                </div>
+                <div className="text-center p-3 rounded-md bg-muted/50">
+                  <p className="text-xs text-muted-foreground mb-1">Bad Timing No-Answer Rate</p>
+                  <p className="text-xl font-bold" data-testid="text-bad-timing-no-answer">{metrics.callTimingAnalysis.badTimingNoAnswerRate}%</p>
+                </div>
+                <div className="text-center p-3 rounded-md bg-muted/50">
+                  <p className="text-xs text-muted-foreground mb-1">Bad Timing % of All Calls</p>
+                  <p className="text-xl font-bold" data-testid="text-bad-timing-pct">
+                    {metrics.callTimingAnalysis.totalCalls > 0
+                      ? ((metrics.callTimingAnalysis.badTimingCalls / metrics.callTimingAnalysis.totalCalls) * 100).toFixed(1)
+                      : "0.0"}%
+                  </p>
+                </div>
+              </div>
+
+              {metrics.callTimingAnalysis.bestHours.length > 0 && (
+                <div>
+                  <p className="text-sm font-medium mb-2">Best Performing Call Hours (by connect rate)</p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left">
+                          <th className="pb-2 pr-3 font-medium text-muted-foreground">Hour</th>
+                          <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Calls</th>
+                          <th className="pb-2 font-medium text-muted-foreground text-right">Connect Rate</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {metrics.callTimingAnalysis.bestHours.slice(0, 10).map((h) => (
+                          <tr key={h.hour} className="border-b last:border-b-0" data-testid={`row-hour-${h.hour}`}>
+                            <td className="py-2 pr-3 font-medium">{formatHour(h.hour)}</td>
+                            <td className="py-2 pr-3 text-right">
+                              <Badge variant="outline">{h.calls}</Badge>
+                            </td>
+                            <td className="py-2 text-right text-muted-foreground">{h.connectRate}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </>
       ) : null}
+    </div>
+  );
+}
+
+function FunnelStep({ label, value, highlight }: { label: string; value: string | number; highlight?: boolean }) {
+  return (
+    <div className={`text-center p-2 rounded-md min-w-[80px] ${highlight ? "bg-primary/10" : "bg-muted/50"}`}>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-lg font-bold ${highlight ? "text-primary" : ""}`}>{value}</p>
     </div>
   );
 }

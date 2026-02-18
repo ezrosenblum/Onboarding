@@ -28,6 +28,11 @@ interface TodayData {
     attemptsMadeToday: number;
     emailsSentToday: number;
   };
+  weeklyStats: {
+    callsThisWeek: number;
+    emailsThisWeek: number;
+    signupsThisWeek: number;
+  };
   dailyCallTarget: number | null;
 }
 
@@ -105,6 +110,7 @@ export default function TodayViewPage() {
   const activeLeads = data?.activeLeads ?? [];
   const completedLeads = data?.completedLeads ?? [];
   const counters = data?.counters;
+  const weeklyStats = data?.weeklyStats;
   const target = data?.dailyCallTarget;
 
   const suggestedNew = target ? Math.round(target * 0.8) : null;
@@ -200,6 +206,36 @@ export default function TodayViewPage() {
             </CardContent>
           </Card>
         </div>
+      )}
+
+      {weeklyStats && (
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs font-medium text-muted-foreground mb-3">This Week</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div>
+                <p className="text-lg font-bold" data-testid="text-calls-week">{weeklyStats.callsThisWeek}</p>
+                <p className="text-xs text-muted-foreground">Calls</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold" data-testid="text-emails-week">{weeklyStats.emailsThisWeek}</p>
+                <p className="text-xs text-muted-foreground">Emails</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold" data-testid="text-signups-week">{weeklyStats.signupsThisWeek}</p>
+                <p className="text-xs text-muted-foreground">Signups</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold" data-testid="text-conversion-week">
+                  {weeklyStats.callsThisWeek > 0
+                    ? ((weeklyStats.signupsThisWeek / weeklyStats.callsThisWeek) * 100).toFixed(1)
+                    : "0.0"}%
+                </p>
+                <p className="text-xs text-muted-foreground">Conversion %</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {target && suggestedNew !== null && suggestedRetry !== null && (

@@ -125,7 +125,7 @@ export async function registerRoutes(
     const userId = req.user!.id;
     const includeUnreachable = req.query.includeUnreachable === "true";
 
-    const [newLeads, retryLeads, activeLeads, completedLeads, callsToday, allAssigned, retryEligibleCount, emailsToday] = await Promise.all([
+    const [newLeads, retryLeads, activeLeads, completedLeads, callsToday, allAssigned, retryEligibleCount, emailsToday, weeklyStats] = await Promise.all([
       storage.getNewLeads(userId, includeUnreachable),
       storage.getRetryLeads(userId, includeUnreachable),
       storage.getActiveLeads(userId, includeUnreachable),
@@ -134,6 +134,7 @@ export async function registerRoutes(
       storage.getLeadsByUserId(userId),
       storage.getRetryEligibleCount(userId),
       storage.getEmailsSentTodayByUserId(userId),
+      storage.getCallerWeeklyStats(userId),
     ]);
 
     res.json({
@@ -147,6 +148,7 @@ export async function registerRoutes(
         attemptsMadeToday: callsToday,
         emailsSentToday: emailsToday,
       },
+      weeklyStats,
       dailyCallTarget: req.user!.dailyCallTarget || null,
     });
   });

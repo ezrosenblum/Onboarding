@@ -173,8 +173,15 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 - Admin page at `/admin/performance-dashboard`
 - GET /api/admin/metrics/performance?range=today|week|month
 - Calls per caller, emails per caller, email open/click/bounce rates
-- Conversion funnel: call→email, email open %, click %, click→signup
+- Full conversion funnel: Calls → Call→Email% → Email→Open% → Open→Click% → Click→Signup% → Call→Signup%
+- Per-caller breakdown: calls, emails, Call→Email%, signups, Click→Signup%, unreachable count, avg attempts per lead
+- Signups by State and Signups by Category breakdowns
+- Call Timing Analysis: bad timing calls, no-answer rate in bad timing, best performing hours by connect rate
 - Date range selector (today/week/month)
+
+### Caller Today View Stats
+- Daily stats: Assigned, Retry Ready, Calls Today, Emails Today, Call→Email %
+- Weekly stats: Calls This Week, Emails This Week, Signups This Week, Conversion %
 
 ## Caller Self-Pull
 - POST /api/leads/self-pull - Caller pulls 1-50 unassigned leads
