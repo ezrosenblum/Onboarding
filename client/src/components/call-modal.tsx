@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import type { Lead, CallLog } from "@shared/schema";
+import type { Lead, CallLog, AiResearchCache } from "@shared/schema";
 import { callOutcomeEnum } from "@shared/schema";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -18,7 +18,12 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Phone, Clock, Loader2, Sparkles } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Phone, Clock, Loader2, Sparkles, RefreshCw, ChevronDown, AlertTriangle } from "lucide-react";
 import { format } from "date-fns";
 
 const OUTCOME_LABELS: Record<string, string> = {
@@ -161,12 +166,7 @@ export function CallModal({ lead, open, onClose }: CallModalProps) {
 
             <Separator />
 
-            <div className="rounded-md bg-muted p-3">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Sparkles className="h-3 w-3" />
-                <span>AI Opener Script (coming in Stage 4)</span>
-              </div>
-            </div>
+            <AiOpenerSection leadId={lead.id} />
           </div>
         )}
 
@@ -185,5 +185,109 @@ export function CallModal({ lead, open, onClose }: CallModalProps) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+interface AiResearchResponse {
+  cache: AiResearchCache | null;
+  isStale: boolean;
+  currentPromptVersion: number;
+  aiConfigured: boolean;
+  mock?: boolean;
+}
+
+function AiOpenerSection({ leadId }: { leadId: number }) {
+  const [isOpen, setIsOpen] = useState(true);
+  const { toast } = useToast();
+
+  const { data, isLoading } = useQuery<AiResearchResponse>({
+    queryKey: ["/api/leads", leadId.toString(), "ai-research"],
+    enabled: !!leadId,
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/leads/${leadId}/ai-research`);
+      return res.json();
+    },
+    onSuccess: (result: AiResearchResponse) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId.toString(), "ai-research"] });
+      if (result.mock) {
+        toast({ title: "Mock script generated", description: "AI not configured - using placeholder" });
+      } else {
+        toast({ title: "AI opener script generated" });
+      }
+    },
+    onError: (err: any) => {
+      toast({ title: "AI generation failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const hasCache = !!data?.cache;
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen}>
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex items-center gap-2 w-full text-left rounded-md bg-muted p-3 hover-elevate"
+          data-testid="button-toggle-ai-opener"
+        >
+          <Sparkles className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-sm font-medium flex-1">AI Opener Script</span>
+          {data?.isStale && <Badge variant="outline" className="text-xs">Stale</Badge>}
+          <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="px-3 pb-3 space-y-2">
+          {isLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading...
+            </div>
+          ) : hasCache ? (
+            <>
+              {data.isStale && (
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <AlertTriangle className="h-3 w-3" />
+                  <span>Prompt updated since this was generated. Consider regenerating.</span>
+                </div>
+              )}
+              <p className="text-sm whitespace-pre-wrap leading-relaxed" data-testid="text-ai-opener-script">
+                {data.cache!.resultText}
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => generateMutation.mutate()}
+                  disabled={generateMutation.isPending}
+                  data-testid="button-regenerate-ai"
+                >
+                  {generateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                  Regenerate
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  v{data.cache!.promptVersion} &middot; {data.cache!.model}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="py-2">
+              <p className="text-xs text-muted-foreground mb-2">No AI opener generated for this lead yet.</p>
+              <Button
+                size="sm"
+                onClick={() => generateMutation.mutate()}
+                disabled={generateMutation.isPending}
+                data-testid="button-generate-ai"
+              >
+                {generateMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Sparkles className="h-3 w-3 mr-1" />}
+                Generate Opener
+              </Button>
+            </div>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

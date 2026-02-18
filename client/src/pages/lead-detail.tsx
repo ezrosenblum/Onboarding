@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute } from "wouter";
-import type { Lead, CallLog, LeadNote, EmailLog } from "@shared/schema";
+import type { Lead, CallLog, LeadNote, EmailLog, AiResearchCache } from "@shared/schema";
 import { callOutcomeEnum } from "@shared/schema";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth";
@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Building2, Phone, Mail, MapPin, Globe, Star, MessageSquare,
   Clock, Save, Plus, Loader2, ArrowLeft, ExternalLink, PhoneCall,
-  Send, AlertCircle
+  Send, AlertCircle, Sparkles, RefreshCw, AlertTriangle
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
@@ -27,6 +27,14 @@ interface EmailEligibility {
   sendInfo: { eligible: boolean; reasons: string[] };
   followUp: { eligible: boolean; reasons: string[] };
   unreachableOutreach: { eligible: boolean; reasons: string[] };
+}
+
+interface AiResearchResponse {
+  cache: AiResearchCache | null;
+  isStale: boolean;
+  currentPromptVersion: number;
+  aiConfigured: boolean;
+  mock?: boolean;
 }
 
 export default function LeadDetailPage() {
@@ -40,6 +48,7 @@ export default function LeadDetailPage() {
   const { data: notes } = useQuery<LeadNote[]>({ queryKey: ["/api/leads", leadId, "notes"], enabled: !!leadId });
   const { data: emailLogs } = useQuery<EmailLog[]>({ queryKey: ["/api/leads", leadId, "emails"], enabled: !!leadId });
   const { data: eligibility } = useQuery<EmailEligibility>({ queryKey: ["/api/leads", leadId, "email-eligibility"], enabled: !!leadId });
+  const { data: aiResearch, isLoading: aiLoading } = useQuery<AiResearchResponse>({ queryKey: ["/api/leads", leadId, "ai-research"], enabled: !!leadId });
 
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
@@ -123,6 +132,24 @@ export default function LeadDetailPage() {
     },
   });
 
+  const generateAiMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/leads/${leadId}/ai-research`);
+      return res.json();
+    },
+    onSuccess: (result: AiResearchResponse) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId, "ai-research"] });
+      if (result.mock) {
+        toast({ title: "Mock script generated", description: "AI not configured - using placeholder" });
+      } else {
+        toast({ title: "AI opener script generated" });
+      }
+    },
+    onError: (err: any) => {
+      toast({ title: "AI generation failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const canEdit = user?.role === "admin" || lead?.assignedToUserId === user?.id;
 
   if (isLoading) {
@@ -177,6 +204,7 @@ export default function LeadDetailPage() {
           <TabsTrigger value="calls" data-testid="tab-calls">Call Logs</TabsTrigger>
           <TabsTrigger value="emails" data-testid="tab-emails">Emails</TabsTrigger>
           <TabsTrigger value="notes" data-testid="tab-notes">Notes</TabsTrigger>
+          <TabsTrigger value="ai" data-testid="tab-ai">AI Script</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4 mt-4">
@@ -419,6 +447,79 @@ export default function LeadDetailPage() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="ai" className="space-y-4 mt-4">
+          <Card>
+            <CardHeader className="pb-3">
+              <h3 className="font-semibold flex items-center gap-2"><Sparkles className="h-4 w-4" /> AI Opener Script</h3>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {aiLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Loading AI research...
+                </div>
+              ) : aiResearch?.cache ? (
+                <>
+                  {aiResearch.isStale && (
+                    <div className="flex items-center gap-2 rounded-md bg-muted p-3">
+                      <AlertTriangle className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <p className="text-sm text-muted-foreground">
+                        The AI prompt has been updated since this script was generated. Consider regenerating for the latest version.
+                      </p>
+                    </div>
+                  )}
+                  <div className="rounded-md bg-muted p-4">
+                    <p className="text-sm whitespace-pre-wrap leading-relaxed" data-testid="text-ai-script-detail">
+                      {aiResearch.cache.resultText}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => generateAiMutation.mutate()}
+                      disabled={generateAiMutation.isPending}
+                      data-testid="button-regenerate-ai-detail"
+                    >
+                      {generateAiMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                      Regenerate
+                    </Button>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+                      <span>Prompt v{aiResearch.cache.promptVersion}</span>
+                      <span>&middot;</span>
+                      <span>Model: {aiResearch.cache.model}</span>
+                      {aiResearch.cache.tokensIn != null && aiResearch.cache.tokensOut != null && (
+                        <>
+                          <span>&middot;</span>
+                          <span>{aiResearch.cache.tokensIn + aiResearch.cache.tokensOut} tokens</span>
+                        </>
+                      )}
+                      <span>&middot;</span>
+                      <span>{format(new Date(aiResearch.cache.createdAt), "MMM d, yyyy h:mm a")}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-4">
+                  <Sparkles className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                  <p className="text-sm text-muted-foreground mb-3">
+                    No AI opener script generated for this lead yet.
+                  </p>
+                  {canEdit && (
+                    <Button
+                      onClick={() => generateAiMutation.mutate()}
+                      disabled={generateAiMutation.isPending}
+                      data-testid="button-generate-ai-detail"
+                    >
+                      {generateAiMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
+                      Generate Opener Script
+                    </Button>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>

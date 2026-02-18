@@ -10,6 +10,7 @@ import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, emailTem
 import type { InsertLead, CallOutcome, EmailTemplateType } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { buildEmailContent, sendEmail, getDefaultTemplates } from "./email-service";
+import { generateOpenerScript, getDefaultAiPrompt, isAiConfigured } from "./services/aiProvider";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
@@ -607,6 +608,116 @@ export async function registerRoutes(
       maxRetryAttempts: parseInt(maxRetry || "3"),
       retryDelayBusinessDays: parseInt(retryDelay || "2"),
     });
+  });
+
+  app.get("/api/leads/:id/ai-research", requireAuth, async (req, res) => {
+    const leadId = parseInt(req.params.id);
+    const lead = await storage.getLeadById(leadId);
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+    const isAdmin = req.user!.role === "admin";
+    const isAssigned = lead.assignedToUserId === req.user!.id;
+    if (!isAdmin && !isAssigned) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    const cache = await storage.getAiResearchCache(leadId);
+    const prompt = await storage.getAiPrompt(lead.pipelineType);
+    const currentVersion = prompt?.version ?? 0;
+    const isStale = cache ? cache.promptVersion < currentVersion : false;
+
+    res.json({
+      cache: cache || null,
+      isStale,
+      currentPromptVersion: currentVersion,
+      aiConfigured: isAiConfigured(),
+    });
+  });
+
+  app.post("/api/leads/:id/ai-research", requireAuth, async (req, res) => {
+    const leadId = parseInt(req.params.id);
+    const lead = await storage.getLeadById(leadId);
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+    const isAdmin = req.user!.role === "admin";
+    const isAssigned = lead.assignedToUserId === req.user!.id;
+    if (!isAdmin && !isAssigned) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    const prompt = await storage.getAiPrompt(lead.pipelineType);
+    const promptTemplate = prompt?.promptTemplate ?? getDefaultAiPrompt();
+    const promptVersion = prompt?.version ?? 0;
+
+    try {
+      const result = await generateOpenerScript(promptTemplate, lead);
+
+      const cached = await storage.upsertAiResearchCache({
+        leadId,
+        pipelineType: lead.pipelineType,
+        promptVersion,
+        promptTextSnapshot: promptTemplate,
+        resultText: result.text,
+        model: result.model,
+        tokensIn: result.tokensIn,
+        tokensOut: result.tokensOut,
+        createdByUserId: req.user!.id,
+      });
+
+      res.json({
+        cache: cached,
+        isStale: false,
+        currentPromptVersion: promptVersion,
+        aiConfigured: isAiConfigured(),
+        mock: result.mock,
+      });
+    } catch (err: any) {
+      console.error("[AI] Error generating opener:", err);
+      res.status(500).json({ message: "AI generation failed: " + (err.message || "Unknown error") });
+    }
+  });
+
+  app.get("/api/admin/ai-prompts", requireAdmin, async (_req, res) => {
+    const prompts = await storage.getAllAiPrompts();
+    const defaults: Record<string, string> = { vendor: getDefaultAiPrompt() };
+    const result = ["vendor"].map((pipeline) => {
+      const saved = prompts.find((p) => p.pipelineType === pipeline);
+      if (saved) return { ...saved, isDefault: false };
+      return {
+        id: null,
+        pipelineType: pipeline,
+        promptTemplate: defaults[pipeline],
+        version: 0,
+        updatedByUserId: null,
+        updatedAt: null,
+        createdAt: null,
+        isDefault: true,
+      };
+    });
+    res.json(result);
+  });
+
+  app.put("/api/admin/ai-prompts", requireAdmin, async (req, res) => {
+    const { pipelineType, promptTemplate } = req.body;
+    if (!pipelineType || !promptTemplate?.trim()) {
+      return res.status(400).json({ message: "pipelineType and promptTemplate are required" });
+    }
+    const prompt = await storage.upsertAiPrompt(pipelineType, promptTemplate.trim(), req.user!.id);
+    res.json(prompt);
+  });
+
+  app.post("/api/admin/ai-prompts/restore-default", requireAdmin, async (req, res) => {
+    const { pipelineType } = req.body;
+    if (!pipelineType) {
+      return res.status(400).json({ message: "pipelineType is required" });
+    }
+    const defaults: Record<string, string> = { vendor: getDefaultAiPrompt() };
+    const defaultPrompt = defaults[pipelineType];
+    if (!defaultPrompt) {
+      return res.status(400).json({ message: "Invalid pipeline type" });
+    }
+    const prompt = await storage.upsertAiPrompt(pipelineType, defaultPrompt, req.user!.id);
+    res.json(prompt);
   });
 
   return httpServer;
