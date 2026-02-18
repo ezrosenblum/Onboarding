@@ -169,6 +169,23 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 - `GET /api/admin/leads/:id/signup-events` - Signup audit trail (admin only)
 - `GET /api/admin/metrics/signups?range=today|week|month` - Signup metrics (admin only)
 
+## Admin Performance Dashboard
+- Admin page at `/admin/performance-dashboard`
+- GET /api/admin/metrics/performance?range=today|week|month
+- Calls per caller, emails per caller, email open/click/bounce rates
+- Conversion funnel: call→email, email open %, click %, click→signup
+- Date range selector (today/week/month)
+
+## Caller Self-Pull
+- POST /api/leads/self-pull - Caller pulls 1-50 unassigned leads
+- State/category filters supported
+- Button on Today View with configurable count and filters
+
+## Assign Batch Filters
+- State, category, min rating, has-phone, has-email filters
+- Min rating uses CAST(rating AS NUMERIC) for proper comparison
+- Checkboxes for has-phone and has-email
+
 ## Seed Data
 - Default admin: admin@supplystreamline.com / admin123
 - System settings: max_retry_attempts=3, retry_delay_business_days=2
