@@ -144,6 +144,35 @@ export const emailTemplates = pgTable("email_templates", {
   uniqueIndex("email_templates_pipeline_template_unique").on(table.pipelineType, table.templateType),
 ]);
 
+export const aiPrompts = pgTable("ai_prompts", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  pipelineType: text("pipeline_type").notNull().$type<PipelineType>(),
+  promptTemplate: text("prompt_template").notNull(),
+  version: integer("version").notNull().default(1),
+  updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("ai_prompts_pipeline_unique").on(table.pipelineType),
+]);
+
+export const aiResearchCache = pgTable("ai_research_cache", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull().references(() => leads.id),
+  pipelineType: text("pipeline_type").notNull().$type<PipelineType>(),
+  promptVersion: integer("prompt_version").notNull(),
+  promptTextSnapshot: text("prompt_text_snapshot").notNull(),
+  resultText: text("result_text").notNull(),
+  model: text("model").notNull(),
+  tokensIn: integer("tokens_in"),
+  tokensOut: integer("tokens_out"),
+  createdByUserId: integer("created_by_user_id").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("ai_research_cache_lead_unique").on(table.leadId),
+]);
+
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
@@ -178,6 +207,14 @@ export type EmailEvent = typeof emailEvents.$inferSelect;
 export const insertEmailTemplateSchema = createInsertSchema(emailTemplates).omit({ id: true, updatedAt: true });
 export type InsertEmailTemplate = z.infer<typeof insertEmailTemplateSchema>;
 export type EmailTemplate = typeof emailTemplates.$inferSelect;
+
+export const insertAiPromptSchema = createInsertSchema(aiPrompts).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAiPrompt = z.infer<typeof insertAiPromptSchema>;
+export type AiPrompt = typeof aiPrompts.$inferSelect;
+
+export const insertAiResearchCacheSchema = createInsertSchema(aiResearchCache).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAiResearchCache = z.infer<typeof insertAiResearchCacheSchema>;
+export type AiResearchCache = typeof aiResearchCache.$inferSelect;
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
 

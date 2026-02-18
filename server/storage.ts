@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { eq, and, isNull, ilike, sql, desc, asc, lte, gte } from "drizzle-orm";
-import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, systemSettings } from "@shared/schema";
-import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, SystemSetting } from "@shared/schema";
+import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearchCache, systemSettings } from "@shared/schema";
+import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchCache, SystemSetting } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
 export interface IStorage {
@@ -46,6 +46,13 @@ export interface IStorage {
   upsertEmailTemplate(data: InsertEmailTemplate): Promise<EmailTemplate>;
 
   getUserCount(): Promise<number>;
+
+  getAiPrompt(pipelineType: string): Promise<AiPrompt | undefined>;
+  getAllAiPrompts(): Promise<AiPrompt[]>;
+  upsertAiPrompt(pipelineType: string, promptTemplate: string, userId: number): Promise<AiPrompt>;
+
+  getAiResearchCache(leadId: number): Promise<AiResearchCache | undefined>;
+  upsertAiResearchCache(data: Omit<AiResearchCache, "id" | "createdAt" | "updatedAt">): Promise<AiResearchCache>;
 
   getSetting(key: string): Promise<string | undefined>;
 }
@@ -319,6 +326,61 @@ export class DatabaseStorage implements IStorage {
       return updated;
     }
     const [created] = await db.insert(emailTemplates).values(data).returning();
+    return created;
+  }
+
+  async getAiPrompt(pipelineType: string): Promise<AiPrompt | undefined> {
+    const [prompt] = await db.select().from(aiPrompts)
+      .where(eq(aiPrompts.pipelineType, pipelineType as any));
+    return prompt;
+  }
+
+  async getAllAiPrompts(): Promise<AiPrompt[]> {
+    return db.select().from(aiPrompts).orderBy(asc(aiPrompts.pipelineType));
+  }
+
+  async upsertAiPrompt(pipelineType: string, promptTemplate: string, userId: number): Promise<AiPrompt> {
+    const existing = await this.getAiPrompt(pipelineType);
+    if (existing) {
+      const [updated] = await db.update(aiPrompts)
+        .set({
+          promptTemplate,
+          version: existing.version + 1,
+          updatedByUserId: userId,
+          updatedAt: new Date(),
+        })
+        .where(eq(aiPrompts.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(aiPrompts).values({
+      pipelineType: pipelineType as any,
+      promptTemplate,
+      version: 1,
+      updatedByUserId: userId,
+    }).returning();
+    return created;
+  }
+
+  async getAiResearchCache(leadId: number): Promise<AiResearchCache | undefined> {
+    const [cache] = await db.select().from(aiResearchCache)
+      .where(eq(aiResearchCache.leadId, leadId));
+    return cache;
+  }
+
+  async upsertAiResearchCache(data: Omit<AiResearchCache, "id" | "createdAt" | "updatedAt">): Promise<AiResearchCache> {
+    const existing = await this.getAiResearchCache(data.leadId);
+    if (existing) {
+      const [updated] = await db.update(aiResearchCache)
+        .set({
+          ...data,
+          updatedAt: new Date(),
+        })
+        .where(eq(aiResearchCache.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(aiResearchCache).values(data as any).returning();
     return created;
   }
 
