@@ -1,0 +1,182 @@
+Implement Stage 6 — Signup Completion Webhook + Manual Override (Admin-only), exactly per the spec below. This is the next chronological stage after Stage 4. Build it in a disciplined, minimal, production-safe way consistent with existing patterns (Express routes, Passport auth, Drizzle schema, TanStack Query UI).
+
+SYSTEM CONTEXT
+- Existing onboarding engine with leads (vendor/buyer), call/email tracking, Today View tabs including COMPLETED placeholder.
+- leads has lead_token (UUID) already used in signup links (?ref={{lead_token}}).
+- status_signup exists (placeholder). COMPLETED tab should be status_signup = SIGNED_UP.
+- Roles: Admin and Vendor Caller (Buyer later).
+
+GOAL
+Close the loop: when SupplyStreamline confirms a signup, the onboarding app marks that lead SIGNED_UP, moves it to COMPLETED, and records an audit event. Also add an Admin-only manual “Mark Signed Up” fallback.
+
+========================================================
+1) DATA MODEL CHANGES (Drizzle + DB)
+========================================================
+
+A) Update leads table: add fields (if not already present)
+- signedUpAt (timestamp, nullable)
+- signedUpEmail (text, nullable)
+- signedUpUserId (text, nullable)          // member_id from main platform
+- signupSource (text, nullable)            // 'webhook' | 'manual'
+- (keep) statusSignup (enum/text): ensure values include at least:
+  - NOT_SIGNED_UP (default)
+  - SIGNED_UP
+
+Make sure Today View COMPLETED tab logic uses statusSignup = SIGNED_UP.
+
+B) New table: signup_events (audit log)  [RECOMMENDED, implement]
+Columns:
+- id (pk)
+- leadId (fk -> leads.id, not null)
+- leadToken (text, not null)
+- eventType (text, not null)                // e.g., 'SIGNUP_CONFIRMED', 'MANUAL_MARK_SIGNED_UP'
+- payloadRaw (jsonb or text, not null)      // store full inbound payload or manual payload
+- receivedAt (timestamp default now, not null)
+- sourceIp (text nullable)
+- userAgent (text nullable)
+- idempotencyKey (text nullable)
+
+Indexes:
+- index on (leadId)
+- index on (leadToken)
+Optional: unique index on (idempotencyKey) WHERE idempotencyKey IS NOT NULL (nice-to-have)
+
+========================================================
+2) WEBHOOK ENDPOINT (NO AUTH SESSION; SECRET HEADER)
+========================================================
+
+Add endpoint:
+POST /api/signup/webhook
+
+Security:
+- Use a shared secret from Replit Secrets: SIGNUP_WEBHOOK_SECRET
+- Require header: X-SS-Webhook-Secret: <secret>
+- If missing or incorrect => 401
+
+Request payload:
+Minimum:
+{ "lead_token": "<uuid>" }
+
+Recommended supported fields:
+{
+  "lead_token": "UUID-string",
+  "event": "signup_confirmed",
+  "email": "user@email.com",
+  "member_id": "12345",
+  "confirmed_at": "2026-02-18T15:22:10Z",
+  "idempotency_key": "optional-unique-id"
+}
+
+Server behavior:
+A) Validate payload
+- if lead_token missing => 400
+B) Find lead by lead_token
+- If not found => return 404 (OK) OR 200 accepted to avoid probing; choose ONE and be consistent.
+  Preferred: 404 for now (internal), but make response generic (no extra info).
+C) Idempotency:
+- If lead.status_signup already SIGNED_UP:
+  - insert signup_events anyway? (optional) OR skip insert if duplicate idempotency_key seen
+  - return 200 { ok:true, already_signed_up:true }
+D) Atomic update in a DB transaction:
+- Update lead:
+  - status_signup = SIGNED_UP
+  - signed_up_at = confirmed_at if provided else now()
+  - signed_up_email = payload.email if present
+  - signed_up_user_id = payload.member_id if present
+  - signup_source = 'webhook'
+- Insert signup_events row:
+  - event_type = 'SIGNUP_CONFIRMED'
+  - payload_raw = full request payload
+  - source_ip = req.ip (or header-forwarded value if present)
+  - user_agent = req.get('user-agent')
+  - idempotency_key = payload.idempotency_key (if any)
+Return:
+- 200 { ok:true, lead_id, already_signed_up:false }
+
+========================================================
+3) ADMIN MANUAL OVERRIDE (REQUIRED)
+========================================================
+
+Admin-only API:
+POST /api/admin/leads/:id/mark-signed-up
+
+Auth:
+- Must be logged in AND role=Admin, server-side enforced.
+
+Body:
+{
+  "email": "optional",
+  "signed_up_at": "optional ISO timestamp"
+}
+
+Behavior (transaction):
+- Set lead.status_signup = SIGNED_UP
+- signed_up_at = provided or now()
+- signed_up_email = provided or keep existing
+- signup_source = 'manual'
+- Insert signup_events:
+  - event_type = 'MANUAL_MARK_SIGNED_UP'
+  - payload_raw = { email, signed_up_at, admin_user_id }
+Return 200 with updated lead signup fields.
+
+Also add a read API for lead signup events (Admin-only, optional but helpful):
+GET /api/admin/leads/:id/signup-events
+Returns event list ordered newest first.
+
+========================================================
+4) FRONTEND UI CHANGES
+========================================================
+
+A) Lead Detail Page
+Add a “Signup Status” section:
+- Shows statusSignup
+- If SIGNED_UP: show signedUpAt, signedUpEmail, signupSource, signedUpUserId (if exists)
+- If NOT_SIGNED_UP: show “Not signed up”
+
+Admin-only button:
+- “Mark Signed Up”
+- Opens confirmation dialog
+- Optional inputs: email, signed_up_at (can be simple text input ISO or datetime picker if available)
+- On confirm: call POST /api/admin/leads/:id/mark-signed-up
+- Invalidate lead query and Today View lists
+
+B) Today View / Tabs
+Ensure COMPLETED tab is driven by status_signup = SIGNED_UP.
+When webhook/manual runs, the lead should:
+- disappear from NEW/RETRY/ACTIVE
+- appear in COMPLETED
+
+C) Admin KPIs (Must-have simple counters)
+Wherever current admin dashboard counters live, add:
+- Signups Today: count of leads where signed_up_at is today (server timezone OK)
+- Signups This Week
+- Signups This Month
+- Signups by Caller: group by assigned_to_user_id (simple attribution)
+
+Implementation approach:
+- Add endpoint: GET /api/admin/metrics/signups?range=today|week|month
+  - Admin-only
+  - returns counts + breakdown by assigned_to_user_id
+Or integrate into existing admin metrics endpoint if one exists.
+
+========================================================
+5) TESTING CHECKLIST (YOU MUST SELF-TEST)
+========================================================
+
+- Webhook valid token + correct secret => lead becomes SIGNED_UP and appears in COMPLETED.
+- Webhook called twice => second call returns already_signed_up:true and does not break state.
+- Invalid secret => 401.
+- Unknown token => chosen behavior (404 or safe 200) is consistent.
+- Manual “Mark Signed Up” works and writes signup_events with source=manual.
+- Admin counters update when a lead is signed up.
+
+========================================================
+6) IMPLEMENTATION NOTES
+========================================================
+- Keep changes minimal and consistent with existing patterns (Drizzle schema + storage + routes + TanStack Query).
+- All state changes must be server-side enforced.
+- All lead updates + signup_events inserts must be in a single transaction.
+- Do not break existing pipelines (vendor/buyer).
+- If status_signup currently uses different naming, adapt carefully but keep “SIGNED_UP” as the final completed state.
+
+Proceed now: schema first, then backend routes, then frontend, then metrics, then test.

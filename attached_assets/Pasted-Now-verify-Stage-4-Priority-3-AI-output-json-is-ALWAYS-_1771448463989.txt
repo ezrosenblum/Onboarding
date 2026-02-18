@@ -1,0 +1,47 @@
+Now verify Stage 4 Priority #3: AI output_json is ALWAYS valid + UI-safe, even when the model returns non-JSON.
+
+DO NOT change code unless a check fails. First verify behavior by inspecting the ai provider/service + route logic.
+
+========================================
+PRIORITY VERIFICATION #3 (MUST PASS)
+Structured output_json parsing + repair/fallback
+========================================
+
+Expected behavior:
+- Server instructs the AI to return ONLY valid JSON matching this schema:
+  {
+    "opener_script": string,
+    "summary_bullets": string[],
+    "discovery_questions": string[],
+    "objections": string[],
+    "suggested_next_step": string
+  }
+
+- Server behavior must be UI-safe:
+  1) Try to parse AI response as JSON
+  2) If parsing fails:
+     - Do ONE repair attempt (optional) OR
+     - Fallback to a guaranteed valid output_json wrapper:
+       {
+         opener_script: <raw_text_trimmed>,
+         summary_bullets: [],
+         discovery_questions: [],
+         objections: [],
+         suggested_next_step: ""
+       }
+  3) Always store valid JSONB output_json in DB
+  4) Always store opener_script extracted (never null/undefined)
+  5) Frontend should never crash even if arrays are empty
+
+Verification tasks:
+1) Locate the AI provider/service file that generates output and parses/repairs JSON.
+   - Confirm the prompt includes strict “JSON only” instructions.
+2) Confirm parsing/repair/fallback logic exists.
+   - Identify exactly what happens on invalid JSON.
+3) Confirm the route stores valid output_json + opener_script extracted.
+4) Confirm the lead-detail + call-modal renders defensively (optional chaining / default arrays).
+
+Report back with PASS/FAIL for each item (1–4).
+If any FAIL: provide the minimal fix plan (specific file + exact change).
+
+BONUS (if feasible quickly): add a simple automated test or dev-only toggle to simulate invalid JSON output (mock provider returning non-JSON) and confirm fallback works.

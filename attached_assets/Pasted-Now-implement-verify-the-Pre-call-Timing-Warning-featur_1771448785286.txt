@@ -1,0 +1,49 @@
+Now implement/verify the “Pre-call Timing Warning” feature (Stage 4 spec section C). This is independent of AI.
+
+REQUIREMENT
+When a caller attempts to log/place a call (i.e., when they open the Call Modal and click “Log Call” / submit):
+- If the lead has scraped Hours + timezone data:
+  - Determine the lead’s LOCAL time (based on lead timezone; if missing, use user timezone as fallback)
+  - If current local time is within 15 minutes of OPENING or within 15 minutes of CLOSING:
+    - Show a soft warning dialog:
+      Title: “Possible bad timing”
+      Message: “It’s within 15 minutes of opening/closing hours. Continue anyway?”
+      Buttons: Cancel / Continue
+    - If Cancel: do not create call_log
+    - If Continue: proceed and set within_bad_timing_window = true on the call_log row
+- If hours/timezone missing or unparsable: no warning, within_bad_timing_window should be false/null.
+
+SCOPE
+- Vendor pipeline only is fine for now.
+- Implement in Call Modal submit flow (client-side dialog + pass flag to backend).
+
+DATA
+Leads already have hours fields from GMB scrape (whatever current structure is). You must inspect the existing lead schema to find:
+- Where hours are stored (e.g., hours_json, hours, opening_hours, business_hours)
+- If timezone is stored; if not, derive from state/city is NOT required; just skip warning if tz missing.
+
+IMPLEMENTATION GUIDANCE
+1) Add a utility function:
+   - parseHoursToTodayWindow(hoursRaw, leadTimezone) -> { openTime, closeTime } or null
+   - Only needs to support the current stored hours format (don’t over-engineer).
+2) In call-modal.tsx on submit:
+   - Compute shouldWarnBadTiming
+   - If shouldWarnBadTiming and user hasn’t confirmed yet:
+     - open AlertDialog
+     - on Continue: submit with withinBadTimingWindow=true
+     - on Cancel: abort submit
+   - If not shouldWarn: submit normally with withinBadTimingWindow=false
+3) Ensure backend route already stores withinBadTimingWindow into within_bad_timing_window (verify mapping).
+
+ACCEPTANCE TEST
+- For a lead whose hours indicate “Open now but closing soon” (within 15 mins): warning appears.
+- Continue logs call with within_bad_timing_window=true in DB.
+- Cancel logs nothing.
+- For a lead with missing hours: no warning and within_bad_timing_window=false/null.
+
+Deliverables:
+- Identify the exact lead fields used for hours + timezone.
+- Implement the warning with minimal code.
+- Confirm by inspecting DB row after test.
+
+Proceed now.
