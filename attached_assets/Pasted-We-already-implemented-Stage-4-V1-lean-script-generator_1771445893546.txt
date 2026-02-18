@@ -1,0 +1,170 @@
+We already implemented Stage 4 V1 (lean script generator) and it’s working. Now we must ALIGN the implementation to the detailed Stage 4 spec below. This is a controlled refactor/upgrade, NOT a rewrite. Preserve working functionality and patterns.
+
+GOAL
+Upgrade Stage 4 to match the spec:
+- AI appears on Lead Detail (primary) + Call Modal (must-have injection)
+- Caching runs once by default
+- Regenerate creates version history (is_current pattern)
+- Admin-editable prompts for vendor + buyer (already present; keep)
+- AI output must be STRICT structured format (JSON-like fields)
+- Store prompt_used + output_json + opener_script extracted
+- Add “More Details” UI panel/tab for secondary content
+- Add pre-call timing warning logic (15 min from open/close) + log within_bad_timing_window in call_logs
+
+IMPORTANT: Do this chronologically and safely:
+1) Admin AI prompt settings (confirm/vendor+b buyer already done)
+2) ai_research table + caching + versioning
+3) Lead page button + output UI (opener + more details)
+4) Regenerate option + version history
+5) Inject opener into Call Modal (always visible)
+6) Logging: store prompt_used + output_json
+
+====================================================
+A) DATABASE CHANGES (Drizzle + Migration)
+====================================================
+
+1) Replace current single-cache design with versioned ai_research records:
+- Create/rename table to: ai_research (preferred name)
+Fields:
+- id (pk)
+- lead_id (fk, not null)
+- pipeline_type (text not null)
+- prompt_version (int not null)   // from ai_prompts.version at time of run
+- prompt_used (text not null)     // final prompt string used
+- model_used (text nullable)
+- output_json (jsonb not null)    // structured AI output
+- opener_script (text not null)   // extracted from output_json.opener_script
+- created_by_user_id (fk not null)
+- created_at (timestamp default now)
+- is_current (boolean default true, not null)
+
+Indexes/constraints:
+- index on (lead_id)
+- partial unique index on (lead_id) WHERE is_current = true  // ensures one current version
+
+If an existing ai_research_cache table exists, write a migration path:
+- keep existing rows by converting them into ai_research records:
+  - output_json = { opener_script: <existing result_text>, summary_bullets: [], discovery_questions: [], objections: [], suggested_next_step: "" }
+  - opener_script = existing result_text
+  - is_current = true
+Then drop/stop using old table.
+
+2) leads table (optional but ok to skip now):
+- Do NOT add ai_current_research_id if partial unique is used. Query current record instead.
+
+3) call_logs table:
+- Ensure within_bad_timing_window boolean exists (if not, add it, default null/false).
+
+====================================================
+B) AI OUTPUT FORMAT (STRICT)
+====================================================
+
+The AI must return structured content. Enforce this server-side.
+
+Required output schema:
+{
+  "opener_script": "string (10–15 seconds spoken)",
+  "summary_bullets": ["3 bullets max"],
+  "discovery_questions": ["3–5 questions"],
+  "objections": ["2–3 objection responses"],
+  "suggested_next_step": "string"
+}
+
+Server must:
+- Attempt to parse AI output as JSON.
+- If model returns extra text, implement a robust extractor:
+  - Ask AI to respond ONLY valid JSON
+  - If parsing fails, do one “repair” pass (lightweight) OR fallback to wrapping raw text into opener_script and empty arrays (but still store valid output_json).
+- Always store valid output_json.
+- opener_script must be extracted and stored in opener_script column.
+
+====================================================
+C) PROMPT COMPOSITION
+====================================================
+
+When generating, the server must:
+1) Load ai_prompts.prompt_template for lead.pipeline_type
+2) Build a structured “Lead Data” JSON block with:
+- company_name
+- full_address
+- city/state/zip
+- phone
+- category_keyword / categories
+- website/domain
+- rating + reviews_count
+- hours_raw (optional)
+- pipeline_type
+
+3) Then append instructions to output ONLY the required JSON schema.
+
+Store the final prompt string in prompt_used.
+
+====================================================
+D) BACKEND ROUTES
+====================================================
+
+1) GET /api/leads/:id/ai-research
+Return current ai_research record for the lead:
+- { exists:false } OR
+- { exists:true, opener_script, output_json, prompt_version, model_used, updated_at/created_at }
+
+2) POST /api/leads/:id/ai-research
+Body: { force?: boolean }
+Logic:
+- Enforce access (admin any; caller only assigned leads)
+- If current exists and force=false: return current
+- If force=true or none exists:
+  - Generate
+  - Set all previous records for this lead: is_current=false (transaction)
+  - Insert new ai_research with is_current=true
+Return current record.
+
+3) Admin prompts routes:
+- Keep existing routes; ensure version increments properly.
+
+====================================================
+E) FRONTEND UI
+====================================================
+
+1) Lead Detail page:
+- Section “AI Call Prep”
+- Button: Run AI Research (if none) else Regenerate
+- Main area: show opener_script prominently (copy button)
+- Secondary panel/tab “More Details”:
+  - summary_bullets
+  - discovery_questions
+  - objections
+  - suggested_next_step
+
+2) Call Modal (must-have):
+- Always show “AI Opener” panel (NOT hidden)
+  - If exists: show opener_script
+  - If not: show “Run AI Research” button inside modal
+- Running in modal should generate + immediately render opener
+- Caller must still be able to log outcome regardless of AI use
+
+Use TanStack Query with invalidation:
+- ['lead-ai', leadId]
+
+====================================================
+F) PRE-CALL TIMING WARNING + LOGGING
+====================================================
+
+Implement the “bad timing” warning when caller attempts to place/log a call:
+- Use scraped Hours + timezone if available
+- If current local time is within 15 minutes of OPEN or CLOSE:
+  - show soft warning dialog: Continue / Cancel
+- Log within_bad_timing_window=true on the call_logs record if they continue
+- If hours/timezone missing, do nothing (no warning)
+
+====================================================
+G) ACCEPTANCE TESTS
+====================================================
+
+- Admin can edit prompts (vendor/buyer) and version increments
+- AI generates structured output_json and displays opener + details on lead page
+- Call modal always shows AI opener; can generate from modal
+- Cache once by default; regenerate creates new version, old marked is_current=false
+- within_bad_timing_window is stored correctly when warning triggers
+
+Proceed carefully: implement schema/migrations first, then backend parsing+versioning, then frontend rendering, then timing warning/logging. Keep existing working routes/UI as much as possible and refactor incrementally.
