@@ -1,0 +1,417 @@
+SUPPLYSTREAMLINE ONBOARDING SYSTEM
+Full Operational Plan
+Purpose (Short Summary)
+
+This app is a structured onboarding engine designed to turn scraped vendor and buyer leads into signed-up SupplyStreamline members through disciplined cold calling, email follow-up, tracking, and measurable conversion stages.
+
+Its purpose is to:
+
+• Organize large volumes of scraped leads
+• Control daily calling workflow
+• Enforce structured follow-ups
+• Track every call and email
+• Automatically mark completed signups
+• Provide real conversion metrics from call → signup
+
+The system is built to eliminate randomness and create a measurable, repeatable acquisition machine.
+
+Core Concept
+
+Every lead moves through a structured lifecycle:
+
+New → Called → Emailed → Clicked → Signed Up → Completed
+
+Nothing is left untracked.
+Nothing disappears.
+Every action is measurable.
+
+Roles
+Admin
+
+Responsible for:
+
+Uploading and organizing leads
+
+Assigning batches to callers
+
+Monitoring performance
+
+Managing email templates
+
+Reviewing metrics
+
+Managing users
+
+Caller (Vendor or Buyer)
+
+Responsible for:
+
+Calling assigned leads
+
+Logging outcomes
+
+Capturing correct email address
+
+Sending follow-up emails
+
+Working retry queue daily
+
+Each caller has their own login and workspace.
+
+Lead Intake & Organization
+Upload
+
+Admin uploads XLSX files scraped from Google Maps.
+
+During upload:
+
+Fields are mapped (company name, phone, website, place_id, email, rating, etc.)
+
+Leads are deduplicated
+
+Each lead is assigned a unique tracking token
+
+Leads are categorized into:
+
+Vendor pipeline
+
+Buyer pipeline
+
+Each pipeline is handled independently.
+
+Assignment System
+
+Admin assigns daily batches to callers.
+
+Assignment options:
+
+Filter by state
+
+Filter by category
+
+Filter by rating
+
+Filter by has phone
+
+Filter by has email
+
+Sort by priority
+
+Select number of leads
+
+Callers can also self-pull leads if admin has not prepared a batch.
+
+No caller is ever blocked from working.
+
+Caller Daily Workflow
+
+Callers work from a structured “Today View” dashboard.
+
+Tabs:
+
+NEW
+
+Leads never called.
+
+RETRY
+
+Leads previously attempted and scheduled for retry.
+Includes:
+
+Eligible today
+
+Scheduled for future retry
+
+ACTIVE / PENDING
+
+Leads that were spoken to and are in progress:
+
+Send Info
+
+Follow Up
+
+Interested
+
+COMPLETED
+
+Leads that have successfully signed up.
+
+Unreachable leads are hidden by default and visible via toggle.
+
+Lead Detail Page (Central Workspace)
+
+When a caller opens a lead, they see:
+
+Company information
+
+Phone number (editable)
+
+Website
+
+Category
+
+Rating & reviews
+
+Hours
+
+Call history
+
+Notes
+
+Email history
+
+Signup status
+
+This is the control center for that lead.
+
+Call Process
+Step 1 — Open Lead
+
+Caller reviews company info and prepares.
+
+(If AI research is available, caller can generate a tailored opener script.)
+
+Step 2 — Click “Call”
+
+Inside the lead page is a Call button.
+
+When clicked:
+
+A call modal opens
+
+Phone number is shown and editable
+
+Opener script is visible (if generated)
+
+Last call attempt is displayed
+
+Attempt count is visible
+
+Caller places the call.
+
+Step 3 — Log Outcome
+
+After call, caller selects outcome from fixed list:
+
+Retry outcomes:
+
+No Answer
+
+Voicemail
+
+Gatekeeper
+
+Call Dropped
+
+Positive outcomes:
+
+Spoke – Send Info
+
+Spoke – Follow Up
+
+Spoke – Interested
+
+Final negative:
+
+Spoke – Not Interested
+
+Caller adds notes if necessary.
+
+Automatic Logic
+
+If retry outcome:
+
+Attempt count increases
+
+Retry scheduled in 2 business days
+
+Max 3 attempts
+
+After max attempts → marked Unreachable
+
+If “Not Interested”:
+
+Marked unreachable immediately
+
+If positive outcome:
+
+Lead moves to ACTIVE / PENDING
+
+All logic is automatic. Caller does not manually manage retries.
+
+Email Process
+
+Inside the Lead Detail page is an Email tab.
+
+Email buttons appear based on eligibility:
+
+Send Info
+
+Requires:
+
+At least one call logged
+
+Confirmed email captured
+
+Not unreachable
+
+Follow Up
+
+Requires:
+
+Send Info already sent
+
+Confirmed email present
+
+Unreachable Outreach
+
+Requires:
+
+Marked unreachable or max attempts reached
+
+Any email available
+
+Emails are sent from:
+connect@supplystreamline.com
+
+Templates are controlled by Admin and can include variables such as:
+
+Company name
+
+Caller name
+
+Signup link
+
+Each email is logged and tracked.
+
+Email Tracking
+
+System tracks:
+
+Sent
+
+Opened
+
+Clicked
+
+Bounced
+
+Status updates automatically.
+
+Each lead has a unique tracking link embedded in the email.
+
+Signup Completion
+
+When a lead signs up through the tracked link and confirms email:
+
+The system receives a webhook
+
+Lead is marked SIGNED_UP
+
+signed_up_at timestamp is stored
+
+Lead moves to COMPLETED tab
+
+This closes the lifecycle.
+
+Metrics & Accountability
+
+The system measures:
+
+For Callers:
+
+Calls placed per day
+
+Emails sent per day
+
+Call → Email conversion %
+
+For Admin:
+
+Emails opened %
+
+Click %
+
+Click → Signup %
+
+Signups today / week / month
+
+Signups per caller
+
+This transforms calling into measurable performance.
+
+Timing Intelligence
+
+System warns if call is placed within:
+
+15 minutes of opening
+
+15 minutes of closing
+
+Call timing is logged for future analysis.
+
+Operational Discipline
+
+The app enforces:
+
+No skipped retry
+
+No duplicate leads
+
+No silent drop-offs
+
+No untracked calls
+
+No emails sent without conversation (unless unreachable outreach)
+
+Clean movement from stage to stage
+
+Every lead lives in exactly one structured state.
+
+Real-Life Daily Use Flow (Simple View)
+
+Admin:
+
+Upload leads
+
+Assign batches
+
+Monitor dashboard
+
+Caller:
+
+Open Today View
+
+Call NEW leads
+
+Work RETRY leads
+
+Capture correct email
+
+Send follow-up
+
+Repeat
+
+System:
+
+Schedule retries
+
+Track opens/clicks
+
+Mark signups
+
+Move to COMPLETED
+
+End Result
+
+This app becomes a controlled acquisition engine that:
+
+Turns raw scraped data into structured opportunity
+
+Forces disciplined follow-up
+
+Creates measurable pipeline metrics
+
+Connects calling activity directly to real signups
+
+It transforms cold outreach from guesswork into a controlled system.
