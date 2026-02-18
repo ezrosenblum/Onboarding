@@ -178,6 +178,7 @@ export const aiResearch = pgTable("ai_research", {
   isCurrent: boolean("is_current").notNull().default(true),
 }, (table) => [
   index("ai_research_lead_id_idx").on(table.leadId),
+  uniqueIndex("ai_research_lead_current_unique").on(table.leadId).where(sql`is_current = true`),
 ]);
 
 export const systemSettings = pgTable("system_settings", {

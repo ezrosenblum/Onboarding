@@ -53,6 +53,7 @@ export interface IStorage {
 
   getCurrentAiResearch(leadId: number): Promise<AiResearchRecord | undefined>;
   createAiResearch(data: { leadId: number; pipelineType: string; promptVersion: number; promptUsed: string; modelUsed: string | null; outputJson: AiOutputJson; openerScript: string; createdByUserId: number }): Promise<AiResearchRecord>;
+  createAiResearchVersioned(data: { leadId: number; pipelineType: string; promptVersion: number; promptUsed: string; modelUsed: string | null; outputJson: AiOutputJson; openerScript: string; createdByUserId: number }): Promise<AiResearchRecord>;
   markPreviousAiResearchNotCurrent(leadId: number): Promise<void>;
   getAiResearchHistory(leadId: number): Promise<AiResearchRecord[]>;
 
@@ -383,6 +384,27 @@ export class DatabaseStorage implements IStorage {
       isCurrent: true,
     }).returning();
     return record;
+  }
+
+  async createAiResearchVersioned(data: { leadId: number; pipelineType: string; promptVersion: number; promptUsed: string; modelUsed: string | null; outputJson: AiOutputJson; openerScript: string; createdByUserId: number }): Promise<AiResearchRecord> {
+    return db.transaction(async (tx) => {
+      await tx.update(aiResearch)
+        .set({ isCurrent: false })
+        .where(and(eq(aiResearch.leadId, data.leadId), eq(aiResearch.isCurrent, true)));
+
+      const [record] = await tx.insert(aiResearch).values({
+        leadId: data.leadId,
+        pipelineType: data.pipelineType as any,
+        promptVersion: data.promptVersion,
+        promptUsed: data.promptUsed,
+        modelUsed: data.modelUsed,
+        outputJson: data.outputJson,
+        openerScript: data.openerScript,
+        createdByUserId: data.createdByUserId,
+        isCurrent: true,
+      }).returning();
+      return record;
+    });
   }
 
   async markPreviousAiResearchNotCurrent(leadId: number): Promise<void> {

@@ -669,9 +669,7 @@ export async function registerRoutes(
     try {
       const result = await generateStructuredResearch(promptTemplate, lead);
 
-      await storage.markPreviousAiResearchNotCurrent(leadId);
-
-      const record = await storage.createAiResearch({
+      const record = await storage.createAiResearchVersioned({
         leadId,
         pipelineType: lead.pipelineType,
         promptVersion,
