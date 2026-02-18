@@ -18,6 +18,7 @@ import AssignBatchPage from "@/pages/admin/assign-batch";
 import ManageUsersPage from "@/pages/admin/manage-users";
 import EmailTemplatesPage from "@/pages/admin/email-templates";
 import AiPromptsPage from "@/pages/admin/ai-prompts";
+import SignupMetricsPage from "@/pages/admin/signup-metrics";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
@@ -48,6 +49,7 @@ function AppRouter() {
       <Route path="/admin/users">{() => <AdminRoute component={ManageUsersPage} />}</Route>
       <Route path="/admin/email-templates">{() => <AdminRoute component={EmailTemplatesPage} />}</Route>
       <Route path="/admin/ai-prompts">{() => <AdminRoute component={AiPromptsPage} />}</Route>
+      <Route path="/admin/signup-metrics">{() => <AdminRoute component={SignupMetricsPage} />}</Route>
       <Route component={NotFound} />
     </Switch>
   );

@@ -9,6 +9,7 @@ import { setupAuth, requireAuth, requireAdmin } from "./auth";
 import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, emailTemplateTypeEnum, callLogs, leads } from "@shared/schema";
 import type { InsertLead, CallOutcome, EmailTemplateType } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 import { buildEmailContent, sendEmail, getDefaultTemplates } from "./email-service";
 import { generateStructuredResearch, getDefaultAiPrompt, isAiConfigured, buildFinalPrompt } from "./services/aiProvider";
 
@@ -735,6 +736,107 @@ export async function registerRoutes(
     }
     const prompt = await storage.upsertAiPrompt(pipelineType, defaultPrompt, req.user!.id);
     res.json(prompt);
+  });
+
+  // ──────────── Stage 6: Signup Webhook + Admin Endpoints ────────────
+
+  app.post("/api/signup/webhook", async (req, res) => {
+    const webhookSecret = process.env.SIGNUP_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error("SIGNUP_WEBHOOK_SECRET not configured - webhook disabled");
+      return res.status(503).json({ message: "Webhook not configured" });
+    }
+    const headerSecret = req.headers["x-webhook-secret"];
+    if (headerSecret !== webhookSecret) {
+      return res.status(401).json({ message: "Invalid webhook secret" });
+    }
+
+    const webhookSchema = z.object({
+      lead_token: z.string().min(1),
+      email: z.string().email().optional().nullable(),
+      user_id: z.string().optional().nullable(),
+      idempotency_key: z.string().optional().nullable(),
+    });
+    const parsed = webhookSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ message: "Invalid payload", errors: parsed.error.flatten().fieldErrors });
+    }
+    const { lead_token, email, user_id, idempotency_key } = parsed.data;
+
+    const lead = await storage.getLeadByToken(lead_token);
+    if (!lead) {
+      return res.status(404).json({ message: "Lead not found for token" });
+    }
+
+    try {
+      await storage.createSignupEvent({
+        leadId: lead.id,
+        leadToken: lead_token,
+        eventType: "webhook_signup",
+        payloadRaw: req.body,
+        sourceIp: (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || null,
+        userAgent: req.headers["user-agent"] || null,
+        idempotencyKey: idempotency_key || null,
+      });
+    } catch (err: any) {
+      if (err.code === "23505" && err.constraint?.includes("idempotency")) {
+        return res.json({ message: "Already processed", leadId: lead.id });
+      }
+      throw err;
+    }
+
+    await storage.updateLead(lead.id, {
+      statusSignup: "SIGNED_UP",
+      signedUpAt: new Date(),
+      signedUpEmail: email || null,
+      signedUpUserId: user_id || null,
+      signupSource: "webhook",
+    });
+
+    res.json({ message: "Signup recorded", leadId: lead.id });
+  });
+
+  app.post("/api/admin/leads/:id/mark-signed-up", requireAuth, requireAdmin, async (req, res) => {
+    const leadId = parseInt(req.params.id);
+    const lead = await storage.getLeadById(leadId);
+    if (!lead) {
+      return res.status(404).json({ message: "Lead not found" });
+    }
+
+    await storage.createSignupEvent({
+      leadId: lead.id,
+      leadToken: lead.leadToken,
+      eventType: "admin_manual",
+      payloadRaw: { markedBy: req.user!.id, note: req.body.note || null },
+      sourceIp: null,
+      userAgent: null,
+      idempotencyKey: null,
+    });
+
+    await storage.updateLead(lead.id, {
+      statusSignup: "SIGNED_UP",
+      signedUpAt: new Date(),
+      signedUpEmail: req.body.email || lead.confirmedEmail || lead.scrapedEmail || null,
+      signedUpUserId: null,
+      signupSource: "admin_manual",
+    });
+
+    res.json({ message: "Lead marked as signed up", leadId: lead.id });
+  });
+
+  app.get("/api/admin/leads/:id/signup-events", requireAuth, requireAdmin, async (req, res) => {
+    const leadId = parseInt(req.params.id);
+    const events = await storage.getSignupEventsByLeadId(leadId);
+    res.json(events);
+  });
+
+  app.get("/api/admin/metrics/signups", requireAuth, requireAdmin, async (req, res) => {
+    const range = (req.query.range as string) || "today";
+    if (!["today", "week", "month"].includes(range)) {
+      return res.status(400).json({ message: "Range must be today, week, or month" });
+    }
+    const metrics = await storage.getSignupMetrics(range as "today" | "week" | "month");
+    res.json(metrics);
   });
 
   return httpServer;

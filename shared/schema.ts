@@ -85,6 +85,10 @@ export const leads = pgTable("leads", {
   leadToken: text("lead_token").notNull().unique().default(sql`gen_random_uuid()`),
   emailLastSentAt: timestamp("email_last_sent_at"),
   emailSentCount: integer("email_sent_count").notNull().default(0),
+  signedUpAt: timestamp("signed_up_at"),
+  signedUpEmail: text("signed_up_email"),
+  signedUpUserId: text("signed_up_user_id"),
+  signupSource: text("signup_source"),
   assignedToUserId: integer("assigned_to_user_id").references(() => users.id),
   assignedAt: timestamp("assigned_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -181,6 +185,22 @@ export const aiResearch = pgTable("ai_research", {
   uniqueIndex("ai_research_lead_current_unique").on(table.leadId).where(sql`is_current = true`),
 ]);
 
+export const signupEvents = pgTable("signup_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull().references(() => leads.id),
+  leadToken: text("lead_token").notNull(),
+  eventType: text("event_type").notNull(),
+  payloadRaw: jsonb("payload_raw").notNull(),
+  receivedAt: timestamp("received_at").defaultNow().notNull(),
+  sourceIp: text("source_ip"),
+  userAgent: text("user_agent"),
+  idempotencyKey: text("idempotency_key"),
+}, (table) => [
+  index("signup_events_lead_id_idx").on(table.leadId),
+  index("signup_events_lead_token_idx").on(table.leadToken),
+  uniqueIndex("signup_events_idempotency_unique").on(table.idempotencyKey).where(sql`idempotency_key IS NOT NULL`),
+]);
+
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
@@ -223,6 +243,8 @@ export type AiPrompt = typeof aiPrompts.$inferSelect;
 export const insertAiResearchSchema = createInsertSchema(aiResearch).omit({ id: true, createdAt: true });
 export type InsertAiResearch = z.infer<typeof insertAiResearchSchema>;
 export type AiResearchRecord = typeof aiResearch.$inferSelect;
+
+export type SignupEvent = typeof signupEvents.$inferSelect;
 
 export type SystemSetting = typeof systemSettings.$inferSelect;
 

@@ -153,6 +153,20 @@ export default function LeadDetailPage() {
     },
   });
 
+  const markSignedUpMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/admin/leads/${leadId}/mark-signed-up`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/metrics/signups"], exact: false });
+      toast({ title: "Lead marked as signed up" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to mark signed up", description: err.message, variant: "destructive" });
+    },
+  });
+
   const canEdit = user?.role === "admin" || lead?.assignedToUserId === user?.id;
 
   if (isLoading) {
@@ -272,6 +286,46 @@ export default function LeadDetailPage() {
               </CardContent>
             </Card>
           )}
+
+          <Card>
+            <CardHeader className="pb-3">
+              <h3 className="font-semibold flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> Signup Status</h3>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-3 flex-wrap">
+                <Badge variant={lead.statusSignup === "SIGNED_UP" ? "default" : "secondary"} data-testid="badge-signup-status">
+                  {lead.statusSignup === "SIGNED_UP" ? "Signed Up" : "Not Signed Up"}
+                </Badge>
+                {lead.signedUpAt && (
+                  <span className="text-xs text-muted-foreground" data-testid="text-signup-date">
+                    {format(new Date(lead.signedUpAt), "MMM d, yyyy h:mm a")}
+                  </span>
+                )}
+                {lead.signupSource && (
+                  <Badge variant="outline" className="text-xs" data-testid="badge-signup-source">
+                    {lead.signupSource === "webhook" ? "Webhook" : "Admin Manual"}
+                  </Badge>
+                )}
+              </div>
+              {lead.signedUpEmail && (
+                <p className="text-sm text-muted-foreground mt-2" data-testid="text-signup-email">
+                  Signup email: {lead.signedUpEmail}
+                </p>
+              )}
+              {user?.role === "admin" && lead.statusSignup !== "SIGNED_UP" && (
+                <Button
+                  variant="outline"
+                  className="mt-3"
+                  onClick={() => markSignedUpMutation.mutate()}
+                  disabled={markSignedUpMutation.isPending}
+                  data-testid="button-mark-signed-up"
+                >
+                  {markSignedUpMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                  Mark as Signed Up
+                </Button>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="calls" className="space-y-4 mt-4">

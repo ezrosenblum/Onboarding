@@ -1,7 +1,7 @@
 import { db } from "./db";
-import { eq, and, isNull, ilike, sql, desc, asc, lte, gte } from "drizzle-orm";
-import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearch, systemSettings } from "@shared/schema";
-import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchRecord, AiOutputJson, SystemSetting } from "@shared/schema";
+import { eq, and, isNull, ilike, sql, desc, asc, lte, gte, count } from "drizzle-orm";
+import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearch, signupEvents, systemSettings } from "@shared/schema";
+import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchRecord, AiOutputJson, SignupEvent, SystemSetting } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
 export interface IStorage {
@@ -56,6 +56,10 @@ export interface IStorage {
   createAiResearchVersioned(data: { leadId: number; pipelineType: string; promptVersion: number; promptUsed: string; modelUsed: string | null; outputJson: AiOutputJson; openerScript: string; createdByUserId: number }): Promise<AiResearchRecord>;
   markPreviousAiResearchNotCurrent(leadId: number): Promise<void>;
   getAiResearchHistory(leadId: number): Promise<AiResearchRecord[]>;
+
+  createSignupEvent(data: { leadId: number; leadToken: string; eventType: string; payloadRaw: any; sourceIp?: string | null; userAgent?: string | null; idempotencyKey?: string | null }): Promise<SignupEvent>;
+  getSignupEventsByLeadId(leadId: number): Promise<SignupEvent[]>;
+  getSignupMetrics(range: "today" | "week" | "month"): Promise<{ total: number; byCaller: { userId: number; userName: string; count: number }[] }>;
 
   getSetting(key: string): Promise<string | undefined>;
 }
@@ -417,6 +421,63 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(aiResearch)
       .where(eq(aiResearch.leadId, leadId))
       .orderBy(desc(aiResearch.createdAt));
+  }
+
+  async createSignupEvent(data: { leadId: number; leadToken: string; eventType: string; payloadRaw: any; sourceIp?: string | null; userAgent?: string | null; idempotencyKey?: string | null }): Promise<SignupEvent> {
+    const [event] = await db.insert(signupEvents).values({
+      leadId: data.leadId,
+      leadToken: data.leadToken,
+      eventType: data.eventType,
+      payloadRaw: data.payloadRaw,
+      sourceIp: data.sourceIp || null,
+      userAgent: data.userAgent || null,
+      idempotencyKey: data.idempotencyKey || null,
+    }).returning();
+    return event;
+  }
+
+  async getSignupEventsByLeadId(leadId: number): Promise<SignupEvent[]> {
+    return db.select().from(signupEvents)
+      .where(eq(signupEvents.leadId, leadId))
+      .orderBy(desc(signupEvents.receivedAt));
+  }
+
+  async getSignupMetrics(range: "today" | "week" | "month"): Promise<{ total: number; byCaller: { userId: number; userName: string; count: number }[] }> {
+    let startDate: Date;
+    const now = new Date();
+    if (range === "today") {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (range === "week") {
+      const day = now.getDay();
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
+    } else {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    const rows = await db.select({
+      assignedToUserId: leads.assignedToUserId,
+      userName: users.name,
+      cnt: count(leads.id),
+    }).from(leads)
+      .leftJoin(users, eq(leads.assignedToUserId, users.id))
+      .where(and(
+        eq(leads.statusSignup, "SIGNED_UP"),
+        gte(leads.signedUpAt, startDate)
+      ))
+      .groupBy(leads.assignedToUserId, users.name);
+
+    let total = 0;
+    const byCaller: { userId: number; userName: string; count: number }[] = [];
+    for (const row of rows) {
+      const c = Number(row.cnt);
+      total += c;
+      if (row.assignedToUserId) {
+        byCaller.push({ userId: row.assignedToUserId, userName: row.userName || "Unknown", count: c });
+      }
+    }
+    byCaller.sort((a, b) => b.count - a.count);
+
+    return { total, byCaller };
   }
 
   async getSetting(key: string): Promise<string | undefined> {

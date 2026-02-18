@@ -1,7 +1,7 @@
 # SupplyStreamline Onboarding
 
 ## Overview
-Internal calling + email + tracking system for onboarding vendors and buyers. Stage 1 MVP implements the Vendor pipeline with Admin and Vendor Caller roles. Stage 2 adds the calling engine with retry logic. Stage 3 adds outbound email capabilities with SendGrid integration. Stage 4 adds AI Research Engine for personalized call opener scripts.
+Internal calling + email + tracking system for onboarding vendors and buyers. Stage 1 MVP implements the Vendor pipeline with Admin and Vendor Caller roles. Stage 2 adds the calling engine with retry logic. Stage 3 adds outbound email capabilities with SendGrid integration. Stage 4 adds AI Research Engine for personalized call opener scripts. Stage 6 adds signup completion tracking via webhook + admin manual override with metrics dashboard.
 
 ## Architecture
 - **Frontend**: React + Vite + Tailwind + Shadcn UI + wouter routing + TanStack Query
@@ -11,7 +11,7 @@ Internal calling + email + tracking system for onboarding vendors and buyers. St
 - **AI**: Replit AI Integrations (OpenAI) for structured call prep output (opener script, key facts, discovery questions, objections, next step)
 
 ## Key Files
-- `shared/schema.ts` - All database schemas and types (users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research, system_settings)
+- `shared/schema.ts` - All database schemas and types (users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research, signup_events, system_settings)
 - `server/routes.ts` - API endpoints + retry logic + email endpoints + webhook + AI endpoints
 - `server/storage.ts` - Database operations (IStorage interface + DatabaseStorage)
 - `server/auth.ts` - Passport setup, session config, middleware
@@ -133,6 +133,42 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 - `PUT /api/admin/ai-prompts` - Save/update AI prompt (admin only)
 - `POST /api/admin/ai-prompts/restore-default` - Restore prompt to default (admin only)
 
+## Signup Completion Tracking (Stage 6)
+### Overview
+- Tracks when vendors complete signup via webhook or admin manual override
+- Signup fields on leads: statusSignup, signedUpAt, signedUpEmail, signedUpUserId, signupSource
+- Audit trail in signup_events table with full payload, source IP, user agent
+- Idempotency via unique index on idempotency_key (nullable)
+
+### Webhook
+- POST /api/signup/webhook - External webhook receiver
+- Requires `X-Webhook-Secret` header matching SIGNUP_WEBHOOK_SECRET env var (mandatory)
+- Validates payload with Zod: lead_token (required), email, user_id, idempotency_key
+- Returns 503 if secret not configured, 401 if wrong secret, 400 if invalid payload
+- Duplicate idempotency_key returns success without re-processing
+
+### Admin Manual Override
+- POST /api/admin/leads/:id/mark-signed-up - Admin marks lead as signed up
+- Records audit event with admin user ID
+
+### Signup Metrics Dashboard
+- GET /api/admin/metrics/signups?range=today|week|month - Metrics with caller leaderboard
+- Admin page at /admin/signup-metrics with range selector
+- Shows total signups and per-caller breakdown
+
+### Lead Detail Integration
+- Signup Status card on Overview tab showing status, date, source
+- Admin "Mark as Signed Up" button for non-signed-up leads
+
+### Today View Integration
+- COMPLETED tab shows leads with statusSignup=SIGNED_UP
+
+### API Endpoints
+- `POST /api/signup/webhook` - External signup webhook (requires X-Webhook-Secret header)
+- `POST /api/admin/leads/:id/mark-signed-up` - Admin manual override (admin only)
+- `GET /api/admin/leads/:id/signup-events` - Signup audit trail (admin only)
+- `GET /api/admin/metrics/signups?range=today|week|month` - Signup metrics (admin only)
+
 ## Seed Data
 - Default admin: admin@supplystreamline.com / admin123
 - System settings: max_retry_attempts=3, retry_delay_business_days=2
@@ -141,7 +177,7 @@ Fixed outcomes: NO_ANSWER, VOICEMAIL, GATEKEEPER, CALL_DROPPED, SPOKE_NOT_INTERE
 ## Database
 - PostgreSQL with Drizzle ORM
 - Push schema: `npm run db:push`
-- Tables: users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research, system_settings
+- Tables: users, leads, call_logs, lead_notes, email_logs, email_events, email_templates, ai_prompts, ai_research, signup_events, system_settings
 - Unique index: (pipeline_type, place_id) WHERE place_id IS NOT NULL
 
 ## Running

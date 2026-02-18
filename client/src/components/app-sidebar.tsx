@@ -1,4 +1,4 @@
-import { Upload, Users, ClipboardList, LayoutDashboard, UserCheck, PhoneCall, List, Mail, Sparkles } from "lucide-react";
+import { Upload, Users, ClipboardList, LayoutDashboard, UserCheck, PhoneCall, List, Mail, Sparkles, BarChart3 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
 import {
@@ -24,6 +24,7 @@ const adminItems = [
   { title: "All Vendor Leads", url: "/leads", icon: ClipboardList },
   { title: "Email Templates", url: "/admin/email-templates", icon: Mail },
   { title: "AI Prompts", url: "/admin/ai-prompts", icon: Sparkles },
+  { title: "Signup Metrics", url: "/admin/signup-metrics", icon: BarChart3 },
   { title: "Manage Users", url: "/admin/users", icon: Users },
 ];
 
