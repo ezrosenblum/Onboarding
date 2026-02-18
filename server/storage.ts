@@ -59,6 +59,7 @@ export interface IStorage {
 
   createSignupEvent(data: { leadId: number; leadToken: string; eventType: string; payloadRaw: any; sourceIp?: string | null; userAgent?: string | null; idempotencyKey?: string | null }): Promise<SignupEvent>;
   getSignupEventsByLeadId(leadId: number): Promise<SignupEvent[]>;
+  processWebhookSignup(eventData: { leadId: number; leadToken: string; eventType: string; payloadRaw: any; sourceIp?: string | null; userAgent?: string | null; idempotencyKey?: string | null }, leadUpdate: { statusSignup: string; signedUpAt: Date; signedUpEmail: string | null; signedUpUserId: string | null; signupSource: string }): Promise<SignupEvent>;
   getSignupMetrics(range: "today" | "week" | "month"): Promise<{ total: number; byCaller: { userId: number; userName: string; count: number }[] }>;
 
   getSetting(key: string): Promise<string | undefined>;
@@ -434,6 +435,32 @@ export class DatabaseStorage implements IStorage {
       idempotencyKey: data.idempotencyKey || null,
     }).returning();
     return event;
+  }
+
+  async processWebhookSignup(eventData: { leadId: number; leadToken: string; eventType: string; payloadRaw: any; sourceIp?: string | null; userAgent?: string | null; idempotencyKey?: string | null }, leadUpdate: { statusSignup: string; signedUpAt: Date; signedUpEmail: string | null; signedUpUserId: string | null; signupSource: string }): Promise<SignupEvent> {
+    return db.transaction(async (tx) => {
+      const [event] = await tx.insert(signupEvents).values({
+        leadId: eventData.leadId,
+        leadToken: eventData.leadToken,
+        eventType: eventData.eventType,
+        payloadRaw: eventData.payloadRaw,
+        sourceIp: eventData.sourceIp || null,
+        userAgent: eventData.userAgent || null,
+        idempotencyKey: eventData.idempotencyKey || null,
+      }).returning();
+
+      await tx.update(leads)
+        .set({
+          statusSignup: leadUpdate.statusSignup,
+          signedUpAt: leadUpdate.signedUpAt,
+          signedUpEmail: leadUpdate.signedUpEmail,
+          signedUpUserId: leadUpdate.signedUpUserId,
+          signupSource: leadUpdate.signupSource,
+        })
+        .where(eq(leads.id, eventData.leadId));
+
+      return event;
+    });
   }
 
   async getSignupEventsByLeadId(leadId: number): Promise<SignupEvent[]> {

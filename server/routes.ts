@@ -753,47 +753,62 @@ export async function registerRoutes(
 
     const webhookSchema = z.object({
       lead_token: z.string().min(1),
-      email: z.string().email().optional().nullable(),
+      event: z.string().optional().nullable(),
+      email: z.string().optional().nullable(),
+      member_id: z.string().optional().nullable(),
       user_id: z.string().optional().nullable(),
+      confirmed_at: z.string().optional().nullable(),
       idempotency_key: z.string().optional().nullable(),
     });
     const parsed = webhookSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ message: "Invalid payload", errors: parsed.error.flatten().fieldErrors });
+      return res.status(400).json({ ok: false, message: "Invalid payload", errors: parsed.error.flatten().fieldErrors });
     }
-    const { lead_token, email, user_id, idempotency_key } = parsed.data;
+    const { lead_token, email, member_id, user_id, confirmed_at, idempotency_key } = parsed.data;
 
     const lead = await storage.getLeadByToken(lead_token);
     if (!lead) {
-      return res.status(404).json({ message: "Lead not found for token" });
+      return res.status(404).json({ ok: false, message: "Lead not found for token" });
     }
 
+    if (lead.statusSignup === "SIGNED_UP" && idempotency_key) {
+      const existing = await storage.getSignupEventsByLeadId(lead.id);
+      const dup = existing.find(e => e.idempotencyKey === idempotency_key);
+      if (dup) {
+        return res.json({ ok: true, already_signed_up: true, leadId: lead.id });
+      }
+    }
+
+    const signedUpAt = confirmed_at ? new Date(confirmed_at) : new Date();
+    const effectiveUserId = member_id || user_id || null;
+
     try {
-      await storage.createSignupEvent({
-        leadId: lead.id,
-        leadToken: lead_token,
-        eventType: "webhook_signup",
-        payloadRaw: req.body,
-        sourceIp: (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || null,
-        userAgent: req.headers["user-agent"] || null,
-        idempotencyKey: idempotency_key || null,
-      });
+      await storage.processWebhookSignup(
+        {
+          leadId: lead.id,
+          leadToken: lead_token,
+          eventType: "webhook_signup",
+          payloadRaw: req.body,
+          sourceIp: (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || null,
+          userAgent: req.headers["user-agent"] || null,
+          idempotencyKey: idempotency_key || null,
+        },
+        {
+          statusSignup: "SIGNED_UP",
+          signedUpAt,
+          signedUpEmail: email || null,
+          signedUpUserId: effectiveUserId,
+          signupSource: "webhook",
+        }
+      );
     } catch (err: any) {
       if (err.code === "23505" && err.constraint?.includes("idempotency")) {
-        return res.json({ message: "Already processed", leadId: lead.id });
+        return res.json({ ok: true, already_signed_up: true, leadId: lead.id });
       }
       throw err;
     }
 
-    await storage.updateLead(lead.id, {
-      statusSignup: "SIGNED_UP",
-      signedUpAt: new Date(),
-      signedUpEmail: email || null,
-      signedUpUserId: user_id || null,
-      signupSource: "webhook",
-    });
-
-    res.json({ message: "Signup recorded", leadId: lead.id });
+    res.json({ ok: true, already_signed_up: false, leadId: lead.id });
   });
 
   app.post("/api/admin/leads/:id/mark-signed-up", requireAuth, requireAdmin, async (req, res) => {

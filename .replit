@@ -40,3 +40,8 @@ waitForPort = 5000
 
 [agent]
 integrations = ["sendgrid:1.0.0", "javascript_openai_ai_integrations:2.0.0"]
+
+[userenv]
+
+[userenv.shared]
+SIGNUP_WEBHOOK_SECRET = "ss-webhook-test-secret-2026"
