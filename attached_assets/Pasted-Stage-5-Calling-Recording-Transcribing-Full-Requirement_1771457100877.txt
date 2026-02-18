@@ -1,0 +1,412 @@
+Stage 5 — Calling, Recording, Transcribing (Full Requirements + Plan)
+Purpose
+
+Enable callers to place calls from inside the app, with every call automatically logged, recorded, and transcribed, so admin can review call quality and you can tie calls → emails → signups with real evidence.
+
+1) User Experience Requirements
+1.1 Lead Page: Call Button → Pre-Call Modal (required)
+
+When caller clicks Call on a lead, open a modal that shows:
+
+Company name + address (read-only)
+
+Phone number (editable input)
+
+Call mode selector
+
+Default: Browser (headset / WebRTC)
+
+Optional: Call via my phone (bridged call)
+
+AI Opener Script box (if present; otherwise shows “Run AI Research” / placeholder)
+
+Business-hours warning
+
+If lead is closed OR within 15 minutes of opening/closing, show a soft warning (Continue / Cancel)
+
+Button: Confirm & Call
+
+Important:
+
+This modal must be fast and reliable. Caller should not be waiting on slow steps.
+
+1.2 In-Call UI (required)
+
+Once call starts, show an in-call panel (either modal or drawer):
+
+Lead name + number being called
+
+Call status: ringing / connected / ended / failed
+
+Timer (duration)
+
+Mute / End Call
+
+(Optional later) keypad / hold
+
+When call ends:
+
+System auto-creates a call record (with duration, start/end, who called, etc.)
+
+Then immediately opens Wrap-Up form.
+
+1.3 Wrap-Up Form (required)
+
+After hangup, show wrap-up panel with:
+
+Outcome dropdown (your fixed 8 outcomes)
+
+Notes box
+
+“Best time to call” field
+
+Confirmed email field (if they gave it)
+
+Save
+
+On Save:
+
+Apply retry rules (attempt_count, retry_next_eligible_at, unreachable)
+
+Update lead statuses accordingly
+
+Enable Email buttons if gating conditions met
+
+2) Calling Modes & Reliability Requirements
+2.1 Mode A — Browser Calling (WebRTC) (default)
+
+Caller uses headset
+
+The call is made directly within browser
+
+Must work on typical Windows laptop/desktop Chrome
+
+Requirements:
+
+Must handle microphone permissions gracefully
+
+Must show clear error states:
+
+mic not permitted
+
+device not found
+
+network issues
+
+2.2 Mode B — “Call via my phone” (bridged call)
+
+Caller enters their phone number in settings once
+
+When they click Call:
+
+Twilio calls the caller’s phone
+
+When caller answers, Twilio bridges them to the lead
+
+Recording must still happen
+
+Requirements:
+
+Caller “agent phone” stored in user profile/settings
+
+If agent phone missing, prompt once and save
+
+Call quality should be consistent
+
+Must still log, record, and transcribe normally
+
+2.3 One Twilio Number (as decided)
+
+Use one Twilio phone number shared by both callers
+
+Attribution is by app user ID / call log, not by separate phone numbers
+
+Only get more numbers later if call quality or concurrency forces it
+
+Concurrency requirement:
+
+Both callers can be on calls at same time using the same Twilio number.
+
+3) Recording Requirements
+3.1 What to record
+
+Record both sides of the conversation
+
+Store recording reference per call attempt
+
+3.2 Where recordings live
+
+Store recording in Twilio (initially)
+
+In database store:
+
+recording URL
+
+recording SID
+
+duration
+
+created time
+
+(Optional later) copy to your own storage (S3/R2) for long-term retention
+
+3.3 Playback UI
+
+In Lead → Call Logs tab:
+
+Each call log row has:
+
+timestamp
+
+outcome
+
+duration
+
+Play recording button
+
+transcript link/view
+
+Admin can listen from lead page
+
+4) Transcription Requirements
+4.1 Output needed
+
+Full transcript text
+
+Timestamped segments if possible (helpful but optional V1)
+
+If possible: speaker separation (Agent vs Lead) — optional V1
+
+4.2 Transcription pipeline
+
+Two acceptable approaches (pick one in implementation; both supported by Twilio routing):
+
+Option 1 (simpler): Twilio handles recording, app handles transcription
+
+Twilio provides recording audio URL
+
+App downloads audio server-side and transcribes via your chosen model/service
+
+Save transcript in DB
+
+Pros: you control quality/model
+
+Cons: more code + storage handling
+
+Option 2 (fastest): Twilio transcription or third-party transcription
+
+Trigger transcription once recording is available
+
+Store results in DB
+
+Pros: less custom work
+
+Cons: less control over quality/cost
+
+Requirement: transcription must be automatic after call ends and recording is available.
+
+4.3 Transcription status UI
+
+Each call log should show:
+
+Transcript status: Pending / Processing / Ready / Failed
+
+If failed, allow “Retry transcription” button (admin-only)
+
+5) Data Model (Required Fields)
+5.1 call_logs table additions
+
+Add fields:
+
+twilio_call_sid (text)
+
+twilio_conference_sid (text optional)
+
+from_number (text) (Twilio number)
+
+to_number (text) (lead phone)
+
+call_mode (text: BROWSER / AGENT_PHONE)
+
+call_status (text: initiated/ringing/in_progress/completed/failed/busy/no_answer etc.)
+
+started_at, ended_at
+
+duration_seconds
+
+recording_sid (text nullable)
+
+recording_url (text nullable)
+
+recording_duration_seconds (int nullable)
+
+transcript_status (text: PENDING/PROCESSING/READY/FAILED)
+
+transcript_text (text nullable)
+
+transcript_provider (text nullable)
+
+transcript_error (text nullable)
+
+within_bad_timing_window (bool) (already planned)
+
+Important:
+
+Wrap-up outcome/notes remain on call log row
+
+You want per-attempt traceability
+
+5.2 leads table additions
+
+last_called_at (timestamp)
+
+preferred_agent_phone (in users table, not leads)
+
+(Optional) best_time_to_call already exists
+
+5.3 audit / event log (optional but good)
+
+Call events table storing webhook events (ringing, answered, completed) for debugging
+
+6) Server-Side Logic Requirements
+6.1 Call initiation endpoint
+
+POST /api/leads/:id/call/start
+Input:
+
+call_mode
+
+phone_override (optional)
+
+agent_phone (if call via phone)
+
+Server must:
+
+Validate permissions (admin or assigned caller)
+
+Validate lead phone exists
+
+Create a call log record in “initiated” state
+
+Ask Twilio to start the call and return what frontend needs (call SID, tokens for WebRTC if used)
+
+6.2 Twilio status webhooks (required)
+
+Twilio must notify your backend when:
+
+call initiated
+
+ringing
+
+answered
+
+completed
+
+busy / failed / no-answer
+
+Endpoint example:
+POST /api/twilio/status
+Server:
+
+finds call log by CallSid
+
+updates call_status and timestamps
+
+sets duration when completed
+
+6.3 Recording webhooks (required)
+
+When recording is available:
+POST /api/twilio/recording
+Server:
+
+attaches recording SID/URL to call log
+
+sets transcript_status = PENDING
+
+triggers transcription job
+
+6.4 Transcription job runner (required)
+
+Needs a reliable background mechanism (in-app queue or scheduled worker):
+
+Pick up call logs where transcript_status = PENDING
+
+Process audio → transcript
+
+Save transcript_text
+
+transcript_status = READY (or FAILED)
+
+If your environment doesn’t support persistent workers, implement a “polling” job approach:
+
+On lead page load, backend checks pending transcripts and processes 1–N at a time (rate-limited)
+
+This is less ideal, but workable if needed.
+
+7) Security & Compliance Requirements
+7.1 Consent / legal
+
+The app should support a configurable disclaimer script (admin setting) like:
+
+“This call may be recorded…”
+
+Because consent laws vary, keep it admin-configurable.
+
+7.2 Access control
+
+Call recordings + transcripts are visible to:
+
+Admin: all
+
+Caller: only their assigned leads’ calls
+
+Prevent URL leakage by proxying playback through the app (optional but recommended)
+
+V1 can store Twilio URL but better to gate access server-side
+
+7.3 Key handling
+
+Twilio credentials in environment secrets
+
+No hardcoding
+
+Webhook signature validation if feasible (recommended)
+
+8) Reporting Impact (What this enables)
+
+Once Stage 5 is live, you get:
+
+Real “calls placed” (not just logged)
+
+Proof for coaching (recordings)
+
+Ability to measure:
+
+call outcomes vs time-of-day
+
+bad timing flag correlation
+
+conversion per caller with qualitative review
+
+9) Chronological Build Plan for Stage 5
+
+Implement in this order (to reduce risk):
+
+DB schema additions (call SIDs, recording, transcript fields)
+
+Call initiation (start call → create call log)
+
+Twilio status webhook (update call lifecycle + duration)
+
+Recording attachment (recording webhook + store URL)
+
+Playback UI (call log row play button)
+
+Transcription pipeline (pending → processing → ready)
+
+Transcript UI (view in call log / lead)
+
+Wrap-up workflow integration (after call end, open wrap-up form)
+
+Hardening (errors, retries, access control, webhooks security)
