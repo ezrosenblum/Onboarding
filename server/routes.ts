@@ -270,6 +270,19 @@ export async function registerRoutes(
     res.json({ assigned });
   });
 
+  app.post("/api/leads/self-pull", requireAuth, async (req, res) => {
+    const count = Math.min(Math.max(parseInt(req.body.count) || 5, 1), 50);
+    const stateFilter = req.body.stateFilter || undefined;
+    const categoryFilter = req.body.categoryFilter || undefined;
+
+    const assigned = await storage.assignLeads(req.user!.id, count, {
+      state: stateFilter,
+      category: categoryFilter,
+    });
+
+    res.json({ assigned });
+  });
+
   app.get("/api/leads/:id/calls", requireAuth, async (req, res) => {
     const logs = await storage.getCallLogsByLeadId(parseInt(req.params.id));
     res.json(logs);
@@ -846,6 +859,15 @@ export async function registerRoutes(
     const leadId = parseInt(req.params.id);
     const events = await storage.getSignupEventsByLeadId(leadId);
     res.json(events);
+  });
+
+  app.get("/api/admin/metrics/performance", requireAuth, requireAdmin, async (req, res) => {
+    const range = (req.query.range as string) || "today";
+    if (!["today", "week", "month"].includes(range)) {
+      return res.status(400).json({ message: "Range must be today, week, or month" });
+    }
+    const metrics = await storage.getPerformanceMetrics(range as "today" | "week" | "month");
+    res.json(metrics);
   });
 
   app.get("/api/admin/metrics/signups", requireAuth, requireAdmin, async (req, res) => {

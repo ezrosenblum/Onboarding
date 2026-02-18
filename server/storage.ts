@@ -4,6 +4,35 @@ import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplat
 import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchRecord, AiOutputJson, SignupEvent, SystemSetting } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
+export interface CallerPerformance {
+  userId: number;
+  userName: string;
+  callsMade: number;
+  emailsSent: number;
+  emailsOpened: number;
+  emailsClicked: number;
+  emailsBounced: number;
+  signups: number;
+}
+
+export interface PerformanceMetrics {
+  totals: {
+    calls: number;
+    emails: number;
+    emailsOpened: number;
+    emailsClicked: number;
+    emailsBounced: number;
+    signups: number;
+  };
+  rates: {
+    callToEmailPct: number;
+    emailOpenPct: number;
+    emailClickPct: number;
+    clickToSignupPct: number;
+  };
+  byCaller: CallerPerformance[];
+}
+
 export interface IStorage {
   getUserById(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
@@ -61,8 +90,10 @@ export interface IStorage {
   getSignupEventsByLeadId(leadId: number): Promise<SignupEvent[]>;
   processWebhookSignup(eventData: { leadId: number; leadToken: string; eventType: string; payloadRaw: any; sourceIp?: string | null; userAgent?: string | null; idempotencyKey?: string | null }, leadUpdate: { statusSignup: string; signedUpAt: Date; signedUpEmail: string | null; signedUpUserId: string | null; signupSource: string }): Promise<SignupEvent>;
   getSignupMetrics(range: "today" | "week" | "month"): Promise<{ total: number; byCaller: { userId: number; userName: string; count: number }[] }>;
+  getPerformanceMetrics(range: "today" | "week" | "month"): Promise<PerformanceMetrics>;
 
   getSetting(key: string): Promise<string | undefined>;
+  getUserCount(): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -505,6 +536,114 @@ export class DatabaseStorage implements IStorage {
     byCaller.sort((a, b) => b.count - a.count);
 
     return { total, byCaller };
+  }
+
+  async getPerformanceMetrics(range: "today" | "week" | "month"): Promise<PerformanceMetrics> {
+    let startDate: Date;
+    const now = new Date();
+    if (range === "today") {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (range === "week") {
+      const day = now.getDay();
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
+    } else {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    const [callRows, emailRows, eventRows, signupRows] = await Promise.all([
+      db.select({
+        userId: callLogs.userId,
+        userName: users.name,
+        cnt: count(callLogs.id),
+      }).from(callLogs)
+        .leftJoin(users, eq(callLogs.userId, users.id))
+        .where(gte(callLogs.calledAt, startDate))
+        .groupBy(callLogs.userId, users.name),
+
+      db.select({
+        userId: emailLogs.userId,
+        userName: users.name,
+        cnt: count(emailLogs.id),
+      }).from(emailLogs)
+        .leftJoin(users, eq(emailLogs.userId, users.id))
+        .where(gte(emailLogs.createdAt, startDate))
+        .groupBy(emailLogs.userId, users.name),
+
+      db.select({
+        eventType: emailEvents.eventType,
+        cnt: count(emailEvents.id),
+      }).from(emailEvents)
+        .where(gte(emailEvents.createdAt, startDate))
+        .groupBy(emailEvents.eventType),
+
+      db.select({
+        userId: leads.assignedToUserId,
+        userName: users.name,
+        cnt: count(leads.id),
+      }).from(leads)
+        .leftJoin(users, eq(leads.assignedToUserId, users.id))
+        .where(and(
+          eq(leads.statusSignup, "SIGNED_UP"),
+          gte(leads.signedUpAt, startDate)
+        ))
+        .groupBy(leads.assignedToUserId, users.name),
+    ]);
+
+    const callerMap = new Map<number, CallerPerformance>();
+    const getOrCreate = (userId: number, userName: string): CallerPerformance => {
+      if (!callerMap.has(userId)) {
+        callerMap.set(userId, { userId, userName, callsMade: 0, emailsSent: 0, emailsOpened: 0, emailsClicked: 0, emailsBounced: 0, signups: 0 });
+      }
+      return callerMap.get(userId)!;
+    };
+
+    let totalCalls = 0, totalEmails = 0, totalSignups = 0;
+    let totalOpened = 0, totalClicked = 0, totalBounced = 0;
+
+    for (const row of callRows) {
+      const c = Number(row.cnt);
+      totalCalls += c;
+      if (row.userId) getOrCreate(row.userId, row.userName || "Unknown").callsMade = c;
+    }
+
+    for (const row of emailRows) {
+      const c = Number(row.cnt);
+      totalEmails += c;
+      if (row.userId) getOrCreate(row.userId, row.userName || "Unknown").emailsSent = c;
+    }
+
+    for (const row of eventRows) {
+      const c = Number(row.cnt);
+      if (row.eventType === "open") totalOpened += c;
+      else if (row.eventType === "click") totalClicked += c;
+      else if (row.eventType === "bounce" || row.eventType === "dropped") totalBounced += c;
+    }
+
+    for (const row of signupRows) {
+      const c = Number(row.cnt);
+      totalSignups += c;
+      if (row.userId) getOrCreate(row.userId, row.userName || "Unknown").signups = c;
+    }
+
+    const byCaller = Array.from(callerMap.values()).sort((a, b) => b.callsMade - a.callsMade);
+
+    return {
+      totals: {
+        calls: totalCalls,
+        emails: totalEmails,
+        emailsOpened: totalOpened,
+        emailsClicked: totalClicked,
+        emailsBounced: totalBounced,
+        signups: totalSignups,
+      },
+      rates: {
+        callToEmailPct: totalCalls > 0 ? Math.round((totalEmails / totalCalls) * 1000) / 10 : 0,
+        emailOpenPct: totalEmails > 0 ? Math.round((totalOpened / totalEmails) * 1000) / 10 : 0,
+        emailClickPct: totalEmails > 0 ? Math.round((totalClicked / totalEmails) * 1000) / 10 : 0,
+        clickToSignupPct: totalClicked > 0 ? Math.round((totalSignups / totalClicked) * 1000) / 10 : 0,
+      },
+      byCaller,
+    };
   }
 
   async getSetting(key: string): Promise<string | undefined> {
