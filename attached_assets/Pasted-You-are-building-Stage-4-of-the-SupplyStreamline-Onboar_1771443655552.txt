@@ -1,0 +1,211 @@
+You are building Stage 4 of the SupplyStreamline Onboarding System: “AI Research Engine” (Option A = Lean Script Generator), for the existing Vendor pipeline first, architected for easy future expansion.
+
+IMPORTANT CONTEXT (already built)
+- Stack: React + Vite + Tailwind + shadcn/ui + TanStack Query + wouter
+- Backend: Express + Passport local auth + PostgreSQL (Neon) + Drizzle ORM
+- Roles: Admin + Vendor Caller (Buyer Caller later)
+- Leads table exists with pipeline_type (vendor/buyer), lead assignment, call logs, email engine, etc.
+- Strict server-side access enforcement: callers only see/act on their assigned leads; admin can access all.
+- We already have lead detail page + call modal flow.
+
+GOAL (Stage 4 Option A)
+Add a lean “AI Opener Script Generator”:
+- Button on lead detail page to generate a personalized opener script
+- Cache result per lead
+- Inject script into call modal UI
+- Admin-editable prompt (vendor/buyer prompts separated) with versioning
+- Built so we can later expand into a full research engine (website scrape, reviews analysis, etc.)
+
+====================================================
+1) DATABASE / DRIZZLE SCHEMA CHANGES
+====================================================
+
+A) Create table: ai_prompts
+- Purpose: Store the admin-editable prompt template per pipeline_type with versioning.
+- Columns:
+  - id (serial or uuid PK)
+  - pipeline_type (text, NOT NULL)  // 'vendor' | 'buyer'
+  - prompt_template (text, NOT NULL)
+  - version (int, NOT NULL, default 1)
+  - updated_by_user_id (int or uuid FK to users, nullable)
+  - updated_at (timestamp, NOT NULL default now)
+  - created_at (timestamp, NOT NULL default now)
+- Constraints:
+  - unique index on (pipeline_type)
+
+Seed defaults:
+- vendor prompt_template default: write a clean cold-call opener script tailored to the lead using provided fields.
+- buyer prompt_template default: similar, but for buyers (even if buyer pipeline UI not built yet, store it now).
+
+B) Create table: ai_research_cache (or lead_ai_cache)
+- Purpose: Store the generated opener script per lead (cached).
+- Columns:
+  - id (serial or uuid PK)
+  - lead_id (FK to leads, NOT NULL)
+  - pipeline_type (text, NOT NULL)
+  - prompt_version (int, NOT NULL)
+  - prompt_text_snapshot (text, NOT NULL)   // store exact final prompt used
+  - result_text (text, NOT NULL)
+  - model (text, NOT NULL)                 // e.g. 'gpt-4.1-mini' (or configured default)
+  - tokens_in (int, nullable)
+  - tokens_out (int, nullable)
+  - created_by_user_id (FK to users, NOT NULL)
+  - created_at (timestamp, NOT NULL default now)
+  - updated_at (timestamp, NOT NULL default now)
+- Constraints:
+  - unique index on (lead_id)  // one active cached result per lead
+
+====================================================
+2) BACKEND: AI PROVIDER + CONFIG
+====================================================
+
+A) Add server-side AI generation service with a provider interface so we can expand later:
+- Create /server/services/aiProvider.ts (or similar):
+  - Interface: generateText({ prompt, model }): returns { text, tokensIn?, tokensOut? }
+  - Implementation 1: OpenAI (uses OPENAI_API_KEY)
+  - Implementation 2: Mock mode fallback if no key (similar to SendGrid mock fallback)
+    - If OPENAI_API_KEY missing, return deterministic mocked opener script (based on company_name/city/state)
+- Add env var support:
+  - OPENAI_API_KEY (optional; if absent => mock mode)
+  - AI_MODEL (optional; default to a lightweight model)
+  - AI_MAX_CHARS (optional guard)
+
+B) Make sure no client ever sees the API key.
+
+====================================================
+3) BACKEND: ROUTES + ACCESS CONTROL
+====================================================
+
+Implement routes:
+
+A) GET /api/leads/:id/ai-research
+- Auth required.
+- Access:
+  - Admin: allowed
+  - Vendor Caller: allowed only if lead is assigned to them AND pipeline_type='vendor'
+- Returns:
+  - { exists: false } if none
+  - else { exists: true, result_text, prompt_version, model, updated_at }
+
+B) POST /api/leads/:id/ai-research
+- Auth required.
+- Body:
+  - { force?: boolean } (default false)
+- Behavior:
+  1) Load lead by id, enforce access rules.
+  2) If cache exists and force=false => return cached.
+  3) Load prompt template from ai_prompts for lead.pipeline_type.
+  4) Build final prompt:
+     - Include a structured “Lead Data” section with fields:
+       company_name
+       city
+       state
+       address (if exists)
+       phone (if exists)
+       website (if exists)
+       primary_category / categories (if exists from GMB scrape)
+       rating / review_count (if exists)
+       hours (if exists)
+       any existing notes (optional)
+       last call outcome (optional)
+     - Then append the admin prompt_template.
+     - Ensure output format request:
+       - 3 short opener variations
+       - Each variation <= ~2 sentences
+       - Add 3 quick discovery questions
+       - Keep it natural, non-pushy, vendor-focused (for vendor pipeline)
+  5) Call aiProvider.generateText()
+  6) Upsert into ai_research_cache:
+     - If exists: update result_text, prompt_text_snapshot, prompt_version, model, token fields, updated_at, created_by_user_id (or updated_by)
+     - If not exists: insert
+  7) Return the same payload as GET but with exists:true
+
+C) Admin routes for prompts:
+- GET /api/admin/ai-prompts
+  - Admin only
+  - Returns both vendor and buyer prompt_template + version + updated_at
+- PUT /api/admin/ai-prompts/:pipeline_type
+  - Admin only
+  - Body: { prompt_template }
+  - Increments version by 1 on each save
+  - Updates updated_by_user_id, updated_at
+
+====================================================
+4) FRONTEND: UI CHANGES
+====================================================
+
+A) Lead Detail Page (Vendor pipeline)
+Add a new section card: “AI Opener Script”
+- If no cached result:
+  - Show explanation text (1–2 lines)
+  - Button: “Generate Opener”
+- If generating:
+  - Show loading spinner + “Generating…”
+- If exists:
+  - Render result_text in a readable format (preserve line breaks)
+  - Buttons:
+    - “Regenerate” (calls POST with force=true)
+    - “Copy” (copies result_text to clipboard)
+  - Show small metadata line: “Updated: {date/time}”
+
+Use TanStack Query:
+- query key: ['lead-ai', leadId]
+- GET fetch on page load
+- mutation for generate/regenerate with invalidation
+
+B) Call Modal Injection
+Where the caller logs a call outcome:
+- Add a collapsible panel or top section:
+  - Title: “AI Opener”
+  - If cached exists: show first ~500 chars with “Show more”
+  - If not exists: show “Generate from lead page” OR provide a small button here too (optional)
+Preferred: allow generating inside call modal as well (same API), to reduce friction.
+
+C) Admin Page: AI Prompt Templates
+Add a new admin page similar to Email Templates:
+- Nav item under Admin: “AI Prompts”
+- Two tabs: Vendor | Buyer
+- Large textarea editor for prompt_template
+- Show current version + updated_at
+- Buttons:
+  - Save (increments version server-side)
+  - Restore Default (resets to seeded default and increments version)
+- Must be DB-driven (no hardcoded prompts beyond defaults/restore)
+
+====================================================
+5) PERMISSIONS / RULES
+====================================================
+
+- Admin can generate AI for any lead.
+- Vendor Caller can generate AI ONLY for their assigned vendor leads.
+- (Buyer pipeline UI not built yet) but prompts must support buyer pipeline_type in DB + admin UI now.
+- All enforcement must be server-side; do not rely on frontend hiding.
+
+====================================================
+6) FUTURE-PROOFING REQUIREMENTS
+====================================================
+
+Design for later expansion into a full research engine:
+- Keep aiProvider interface flexible (later: add “tools” like website scrape).
+- Store prompt_text_snapshot per generation (so later we can audit exactly what produced the script).
+- Keep ai_research_cache extensible:
+  - Add nullable fields later like: sources_json, website_summary, reviews_summary, etc.
+- Keep admin prompts versioned so old generations can be understood.
+
+====================================================
+7) ACCEPTANCE CHECKLIST
+====================================================
+
+- Lead detail page shows AI section and can generate opener.
+- Result is cached and persists on reload.
+- Regenerate overwrites cache and updates timestamp/version.
+- Call modal displays the cached opener for that lead.
+- Admin can edit vendor/buyer AI prompt templates, version increments, restore defaults works.
+- No API key exposure; mock mode works when OPENAI_API_KEY missing.
+- Access rules enforced server-side.
+
+Build this in the existing codebase with the established patterns used for:
+- Email templates admin UI
+- Lead detail fetching
+- TanStack Query hooks
+- Role/assignment enforcement on API routes
