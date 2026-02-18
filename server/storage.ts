@@ -45,7 +45,7 @@ export interface IStorage {
   getAllLeads(pipelineType?: string): Promise<Lead[]>;
   getLeadsByUserId(userId: number): Promise<Lead[]>;
   updateLead(id: number, data: Partial<Lead>): Promise<Lead | undefined>;
-  assignLeads(callerId: number, count: number, filters?: { state?: string; category?: string }): Promise<number>;
+  assignLeads(callerId: number, count: number, filters?: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean }): Promise<number>;
 
   getNewLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
   getRetryLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
@@ -163,7 +163,7 @@ export class DatabaseStorage implements IStorage {
     return lead;
   }
 
-  async assignLeads(callerId: number, count: number, filters?: { state?: string; category?: string }): Promise<number> {
+  async assignLeads(callerId: number, count: number, filters?: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean }): Promise<number> {
     const conditions = [
       eq(leads.pipelineType, "vendor"),
       eq(leads.statusCall, "NOT_CALLED"),
@@ -175,6 +175,15 @@ export class DatabaseStorage implements IStorage {
     }
     if (filters?.category) {
       conditions.push(ilike(leads.categoryKeyword, `%${filters.category}%`));
+    }
+    if (filters?.minRating != null) {
+      conditions.push(sql`CAST(${leads.rating} AS NUMERIC) >= ${filters.minRating}`);
+    }
+    if (filters?.hasPhone) {
+      conditions.push(sql`${leads.phone} IS NOT NULL AND ${leads.phone} != ''`);
+    }
+    if (filters?.hasEmail) {
+      conditions.push(sql`(${leads.scrapedEmail} IS NOT NULL AND ${leads.scrapedEmail} != '') OR (${leads.confirmedEmail} IS NOT NULL AND ${leads.confirmedEmail} != '')`);
     }
 
     const eligible = await db.select({ id: leads.id }).from(leads)

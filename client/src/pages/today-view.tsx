@@ -1,17 +1,20 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Lead } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { CallModal } from "@/components/call-modal";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import {
   Phone, Building2, MapPin, PhoneCall, RotateCcw, CheckCircle2,
-  Target, Clock, Zap, AlertTriangle, Activity, Mail
+  Target, Clock, Zap, AlertTriangle, Activity, Mail, Download, Loader2, TrendingUp
 } from "lucide-react";
 
 interface TodayData {
@@ -71,7 +74,31 @@ export default function TodayViewPage() {
     },
   });
 
+  const { toast } = useToast();
   const [callLead, setCallLead] = useState<Lead | null>(null);
+  const [pullCount, setPullCount] = useState("10");
+  const [pullState, setPullState] = useState("");
+  const [pullCategory, setPullCategory] = useState("");
+  const [showPullPanel, setShowPullPanel] = useState(false);
+
+  const selfPullMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, any> = { count: parseInt(pullCount) || 10 };
+      if (pullState.trim()) body.stateFilter = pullState.trim();
+      if (pullCategory.trim()) body.categoryFilter = pullCategory.trim();
+      const res = await apiRequest("POST", "/api/leads/self-pull", body);
+      return res.json();
+    },
+    onSuccess: (data: { assigned: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads/my"] });
+      toast({ title: `${data.assigned} leads pulled`, description: data.assigned === 0 ? "No unassigned leads matched your filters" : "New leads added to your queue" });
+      if (data.assigned > 0) setShowPullPanel(false);
+    },
+    onError: (err: any) => {
+      toast({ title: "Pull failed", description: err.message, variant: "destructive" });
+    },
+  });
 
   const newLeads = data?.newLeads ?? [];
   const retryLeads = data?.retryLeads ?? [];
@@ -96,22 +123,22 @@ export default function TodayViewPage() {
       </div>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {[1, 2, 3, 4].map((i) => (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {[1, 2, 3, 4, 5].map((i) => (
             <Card key={i}><CardContent className="p-4"><Skeleton className="h-16 w-full" /></CardContent></Card>
           ))}
         </div>
       ) : counters && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted shrink-0">
                   <Target className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold" data-testid="text-total-assigned">{counters.totalAssigned}</p>
-                  <p className="text-xs text-muted-foreground">Total Assigned</p>
+                  <p className="text-xs text-muted-foreground">Assigned</p>
                 </div>
               </div>
             </CardContent>
@@ -119,12 +146,12 @@ export default function TodayViewPage() {
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted shrink-0">
                   <RotateCcw className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold" data-testid="text-retry-eligible">{counters.retryEligible}</p>
-                  <p className="text-xs text-muted-foreground">Retry Eligible</p>
+                  <p className="text-xs text-muted-foreground">Retry Ready</p>
                 </div>
               </div>
             </CardContent>
@@ -132,12 +159,12 @@ export default function TodayViewPage() {
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted shrink-0">
                   <PhoneCall className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold" data-testid="text-attempts-today">{counters.attemptsMadeToday}</p>
-                  <p className="text-xs text-muted-foreground">Attempts Today</p>
+                  <p className="text-xs text-muted-foreground">Calls Today</p>
                 </div>
               </div>
             </CardContent>
@@ -145,12 +172,29 @@ export default function TodayViewPage() {
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted">
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted shrink-0">
                   <Mail className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold" data-testid="text-emails-today">{counters.emailsSentToday}</p>
-                  <p className="text-xs text-muted-foreground">Emails Sent Today</p>
+                  <p className="text-xs text-muted-foreground">Emails Today</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted shrink-0">
+                  <TrendingUp className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold" data-testid="text-conversion-rate">
+                    {counters.attemptsMadeToday > 0
+                      ? ((counters.emailsSentToday / counters.attemptsMadeToday) * 100).toFixed(1)
+                      : "0.0"}%
+                  </p>
+                  <p className="text-xs text-muted-foreground">Call→Email %</p>
                 </div>
               </div>
             </CardContent>
@@ -171,6 +215,69 @@ export default function TodayViewPage() {
                 Suggested: <span className="font-medium text-foreground">{suggestedNew} new</span>, <span className="font-medium text-foreground">{suggestedRetry} retry</span> (80/20)
               </span>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!showPullPanel ? (
+        <Button
+          variant="outline"
+          onClick={() => setShowPullPanel(true)}
+          data-testid="button-show-pull-panel"
+        >
+          <Download className="h-4 w-4 mr-2" />
+          Pull More Leads
+        </Button>
+      ) : (
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <Download className="h-4 w-4" /> Pull Unassigned Leads
+              </h3>
+              <Button variant="ghost" size="sm" onClick={() => setShowPullPanel(false)} data-testid="button-close-pull">
+                Close
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1 block">Count</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={pullCount}
+                  onChange={(e) => setPullCount(e.target.value)}
+                  data-testid="input-pull-count"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1 block">State (optional)</Label>
+                <Input
+                  placeholder="e.g. CA, NY"
+                  value={pullState}
+                  onChange={(e) => setPullState(e.target.value)}
+                  data-testid="input-pull-state"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1 block">Category (optional)</Label>
+                <Input
+                  placeholder="e.g. plumbing"
+                  value={pullCategory}
+                  onChange={(e) => setPullCategory(e.target.value)}
+                  data-testid="input-pull-category"
+                />
+              </div>
+            </div>
+            <Button
+              onClick={() => selfPullMutation.mutate()}
+              disabled={selfPullMutation.isPending}
+              data-testid="button-pull-leads"
+            >
+              {selfPullMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+              Pull {pullCount} Leads
+            </Button>
           </CardContent>
         </Card>
       )}

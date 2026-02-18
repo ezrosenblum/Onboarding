@@ -259,12 +259,15 @@ export async function registerRoutes(
   });
 
   app.post("/api/leads/assign", requireAdmin, async (req, res) => {
-    const { callerId, count, stateFilter, categoryFilter } = req.body;
+    const { callerId, count, stateFilter, categoryFilter, minRating, hasPhone, hasEmail } = req.body;
     if (!callerId || !count) return res.status(400).json({ message: "callerId and count are required" });
 
     const assigned = await storage.assignLeads(callerId, count, {
       state: stateFilter,
       category: categoryFilter,
+      minRating: minRating != null ? parseFloat(minRating) : undefined,
+      hasPhone: hasPhone || undefined,
+      hasEmail: hasEmail || undefined,
     });
 
     res.json({ assigned });

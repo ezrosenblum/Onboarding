@@ -1,0 +1,320 @@
+Perfect. Below are all three:
+
+1. **One-Page Caller SOP**
+2. **Visual Lifecycle Diagram (Operational Flow)**
+3. **KPI Dashboard Specification**
+
+Everything aligned with the full system plan.
+
+---
+
+# 1️⃣ ONE-PAGE CALLER SOP
+
+*(Give this to your Filipino callers)*
+
+---
+
+## 🎯 Your Mission
+
+Turn assigned companies into signed-up SupplyStreamline members.
+
+You do this by:
+
+1. Calling
+2. Getting the correct email
+3. Sending signup info
+4. Following up properly
+
+Everything you do must be logged inside the system.
+
+---
+
+## 📅 Your Daily Routine
+
+### Step 1 — Open “Today View”
+
+Work in this order:
+
+1. **NEW** (Priority – 80%)
+2. **RETRY** (20%)
+3. **ACTIVE/PENDING**
+
+---
+
+## ☎️ How to Work a Lead
+
+### Step A — Open the Lead
+
+Review:
+
+* Company name
+* Website
+* Notes
+* Previous calls
+* Email status
+
+(If AI script is available, read it.)
+
+---
+
+### Step B — Call
+
+Click **Call** button.
+
+After call:
+
+* Select correct outcome
+* Add notes
+* Save
+
+---
+
+## 🎯 Call Outcomes
+
+### Retry outcomes (system will retry automatically)
+
+* No Answer
+* Voicemail
+* Gatekeeper
+* Call Dropped
+
+System will:
+
+* Retry in 2 business days
+* Max 3 attempts
+
+---
+
+### Positive outcomes
+
+* Spoke – Send Info
+* Spoke – Follow Up
+* Spoke – Interested
+
+If positive:
+
+* Get best email address
+* Enter in Confirmed Email field
+* Click **Send Info**
+
+---
+
+### Final Negative
+
+* Spoke – Not Interested
+
+Lead becomes unreachable.
+
+---
+
+## 📧 Sending Email
+
+Go to **Email tab**.
+
+Buttons will activate when allowed.
+
+### Send Info
+
+Only after:
+
+* You spoke with someone
+* You have correct email
+
+### Follow Up
+
+Only after:
+
+* Send Info was already sent
+
+---
+
+## 🧠 Rules
+
+* Never send email without calling first (unless unreachable outreach).
+* Always log call immediately.
+* Always enter best email.
+* Always add notes if useful.
+* Work retries daily.
+* If admin didn’t assign leads, pull from list.
+
+---
+
+## 🏁 When Is a Lead Done?
+
+When:
+
+* They sign up
+* OR they are unreachable
+* OR clearly not interested
+
+System will move them automatically.
+
+---
+
+# 2️⃣ VISUAL LIFECYCLE DIAGRAM
+
+Below is the full operational lifecycle in logical flow format.
+
+---
+
+```
+UPLOAD → ASSIGN → CALL → EMAIL → CLICK → SIGNUP → COMPLETED
+```
+
+Expanded version:
+
+```
+(1) Lead Uploaded
+        ↓
+(2) Assigned to Caller
+        ↓
+(3) NEW Tab
+        ↓
+Caller Calls
+        ↓
+ ┌───────────────────────────────┐
+ │ Outcome?                      │
+ ├───────────────────────────────┤
+ │ No Answer / VM / Gatekeeper   │
+ │ → RETRY scheduled             │
+ │ → Max 3 attempts              │
+ │ → Then Unreachable            │
+ ├───────────────────────────────┤
+ │ Spoke – Send Info             │
+ │ → Enter Email                 │
+ │ → Send Email                  │
+ │ → ACTIVE/PENDING              │
+ ├───────────────────────────────┤
+ │ Spoke – Follow Up             │
+ │ → Follow Up Email             │
+ ├───────────────────────────────┤
+ │ Spoke – Interested            │
+ │ → Send Info                   │
+ ├───────────────────────────────┤
+ │ Not Interested                │
+ │ → Unreachable                 │
+ └───────────────────────────────┘
+        ↓
+(4) Email Sent
+        ↓
+Opened?
+        ↓
+Clicked?
+        ↓
+Signup Confirmed?
+        ↓
+COMPLETED
+```
+
+Retry path:
+
+```
+Call → No Answer
+        ↓
+Retry in 2 Business Days
+        ↓
+Call Again
+        ↓
+Repeat until:
+- Spoke
+- OR 3 attempts reached → Unreachable
+```
+
+---
+
+# 3️⃣ KPI DASHBOARD SPECIFICATION
+
+This is how performance should be measured.
+
+---
+
+## 🎯 Caller Dashboard Metrics
+
+Displayed in Today View:
+
+### Daily:
+
+* Calls Placed Today
+* Emails Sent Today
+* Call → Email %
+* Retry Eligible Count
+
+### Weekly:
+
+* Calls This Week
+* Emails This Week
+* Signups This Week
+* Conversion %
+
+---
+
+## 📊 Admin Dashboard Metrics
+
+### Funnel Metrics
+
+| Stage  | Metric             |
+| ------ | ------------------ |
+| Calls  | Total calls logged |
+| Email  | Call → Email %     |
+| Open   | Email → Open %     |
+| Click  | Open → Click %     |
+| Signup | Click → Signup %   |
+| Final  | Call → Signup %    |
+
+---
+
+## 📈 Performance by Caller
+
+For each caller:
+
+* Calls per day
+* Emails sent
+* Signups
+* Call → Email %
+* Click → Signup %
+* Unreachable rate
+* Average attempts per lead
+
+---
+
+## 📅 Time-Based Reports
+
+* Signups Today
+* Signups This Week
+* Signups This Month
+* Signups by State
+* Signups by Category
+
+---
+
+## 📞 Call Timing Analysis
+
+Track:
+
+* Calls placed within bad timing window
+* No answer rate during bad timing
+* Best performing call hours
+
+---
+
+# Final Result
+
+This system creates:
+
+✔ Structured calling discipline
+✔ Automatic retry control
+✔ Email tracking
+✔ Automatic signup completion
+✔ Measurable funnel performance
+✔ Caller accountability
+✔ Admin visibility
+
+It transforms cold outreach into a measurable acquisition pipeline.
+
+---
+
+If you'd like next, I can create:
+
+* A **2-page Investor / Strategic Overview version**
+* Or a **technical build blueprint for developers**
+* Or a **Standard Operating Manual (full 10-page version)**

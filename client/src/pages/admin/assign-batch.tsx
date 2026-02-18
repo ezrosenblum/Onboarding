@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { UserCheck, Loader2, CheckCircle2, Users } from "lucide-react";
 
@@ -15,6 +17,9 @@ export default function AssignBatchPage() {
   const [count, setCount] = useState("10");
   const [stateFilter, setStateFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [minRating, setMinRating] = useState("");
+  const [hasPhone, setHasPhone] = useState(false);
+  const [hasEmail, setHasEmail] = useState(false);
   const [result, setResult] = useState<{ assigned: number } | null>(null);
 
   const { data: users } = useQuery<User[]>({ queryKey: ["/api/users"] });
@@ -27,6 +32,9 @@ export default function AssignBatchPage() {
         count: parseInt(count),
         stateFilter: stateFilter || undefined,
         categoryFilter: categoryFilter || undefined,
+        minRating: minRating ? parseFloat(minRating) : undefined,
+        hasPhone: hasPhone || undefined,
+        hasEmail: hasEmail || undefined,
       });
       return res.json();
     },
@@ -76,14 +84,29 @@ export default function AssignBatchPage() {
             <Input type="number" min={1} max={500} value={count} onChange={(e) => setCount(e.target.value)} data-testid="input-lead-count" />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">State Filter (optional)</label>
+              <label className="text-xs text-muted-foreground mb-1 block">State (optional)</label>
               <Input value={stateFilter} onChange={(e) => setStateFilter(e.target.value)} placeholder="e.g., CA" data-testid="input-state-filter" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Category Filter (optional)</label>
+              <label className="text-xs text-muted-foreground mb-1 block">Category (optional)</label>
               <Input value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} placeholder="e.g., plumber" data-testid="input-category-filter" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Min Rating (optional)</label>
+              <Input type="number" min={0} max={5} step={0.5} value={minRating} onChange={(e) => setMinRating(e.target.value)} placeholder="e.g., 4.0" data-testid="input-min-rating" />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-6 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Checkbox id="has-phone" checked={hasPhone} onCheckedChange={(c) => setHasPhone(c === true)} data-testid="checkbox-has-phone" />
+              <Label htmlFor="has-phone" className="text-sm cursor-pointer">Has Phone</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox id="has-email" checked={hasEmail} onCheckedChange={(c) => setHasEmail(c === true)} data-testid="checkbox-has-email" />
+              <Label htmlFor="has-email" className="text-sm cursor-pointer">Has Email</Label>
             </div>
           </div>
 
