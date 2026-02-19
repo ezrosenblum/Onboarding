@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { insertUserSchema, type InsertUser, type User, userRoleEnum } from "@shared/schema";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { useAuth } from "@/lib/auth";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,9 +14,10 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Users, Loader2 } from "lucide-react";
+import { Plus, Users, Loader2, Pencil, Trash2 } from "lucide-react";
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
@@ -22,14 +25,32 @@ const ROLE_LABELS: Record<string, string> = {
   buyer_caller: "Buyer Caller",
 };
 
+const editUserSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  email: z.string().email("Invalid email"),
+  role: z.enum(userRoleEnum),
+  password: z.string().optional().refine((val) => !val || val.length >= 6, {
+    message: "Password must be at least 6 characters",
+  }),
+});
+type EditUserInput = z.infer<typeof editUserSchema>;
+
 export default function ManageUsersPage() {
   const { toast } = useToast();
-  const [open, setOpen] = useState(false);
+  const { user: currentUser } = useAuth();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
   const { data: users, isLoading } = useQuery<User[]>({ queryKey: ["/api/users"] });
 
-  const form = useForm<InsertUser>({
+  const createForm = useForm<InsertUser>({
     resolver: zodResolver(insertUserSchema),
     defaultValues: { name: "", email: "", password: "", role: "vendor_caller" },
+  });
+
+  const editForm = useForm<EditUserInput>({
+    resolver: zodResolver(editUserSchema),
+    defaultValues: { name: "", email: "", role: "vendor_caller", password: "" },
   });
 
   const createMutation = useMutation({
@@ -38,14 +59,63 @@ export default function ManageUsersPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      setOpen(false);
-      form.reset();
+      setCreateOpen(false);
+      createForm.reset();
       toast({ title: "User created" });
     },
     onError: (err: any) => {
       toast({ title: "Failed to create user", description: err.message, variant: "destructive" });
     },
   });
+
+  const editMutation = useMutation({
+    mutationFn: async (data: EditUserInput & { id: number }) => {
+      const { id, ...body } = data;
+      const payload: Record<string, string> = {
+        name: body.name,
+        email: body.email,
+        role: body.role,
+      };
+      if (body.password && body.password.length > 0) {
+        payload.password = body.password;
+      }
+      await apiRequest("PATCH", `/api/users/${id}`, payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      setEditOpen(false);
+      setEditingUser(null);
+      editForm.reset();
+      toast({ title: "User updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to update user", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/users/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "User deleted" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to delete user", description: err.message, variant: "destructive" });
+    },
+  });
+
+  function openEditDialog(user: User) {
+    setEditingUser(user);
+    editForm.reset({
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      password: "",
+    });
+    setEditOpen(true);
+  }
 
   return (
     <div className="p-6 space-y-6 max-w-3xl mx-auto">
@@ -56,7 +126,7 @@ export default function ManageUsersPage() {
             {isLoading ? "Loading..." : `${(users ?? []).length} user${(users ?? []).length !== 1 ? "s" : ""}`}
           </p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button data-testid="button-add-user">
               <Plus className="h-4 w-4 mr-2" /> Add User
@@ -66,35 +136,35 @@ export default function ManageUsersPage() {
             <DialogHeader>
               <DialogTitle>Create User</DialogTitle>
             </DialogHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit((d) => createMutation.mutate(d))} className="space-y-4">
-                <FormField control={form.control} name="name" render={({ field }) => (
+            <Form {...createForm}>
+              <form onSubmit={createForm.handleSubmit((d) => createMutation.mutate(d))} className="space-y-4">
+                <FormField control={createForm.control} name="name" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Full Name</FormLabel>
-                    <FormControl><Input placeholder="Jane Doe" data-testid="input-user-name" {...field} /></FormControl>
+                    <FormControl><Input placeholder="Jane Doe" data-testid="input-create-user-name" {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />
-                <FormField control={form.control} name="email" render={({ field }) => (
+                <FormField control={createForm.control} name="email" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Email</FormLabel>
-                    <FormControl><Input type="email" placeholder="jane@company.com" data-testid="input-user-email" {...field} /></FormControl>
+                    <FormControl><Input type="email" placeholder="jane@company.com" data-testid="input-create-user-email" {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />
-                <FormField control={form.control} name="password" render={({ field }) => (
+                <FormField control={createForm.control} name="password" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Password</FormLabel>
-                    <FormControl><Input type="password" placeholder="Min 6 characters" data-testid="input-user-password" {...field} /></FormControl>
+                    <FormControl><Input type="password" placeholder="Min 6 characters" data-testid="input-create-user-password" {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
                 )} />
-                <FormField control={form.control} name="role" render={({ field }) => (
+                <FormField control={createForm.control} name="role" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Role</FormLabel>
                     <Select value={field.value} onValueChange={field.onChange}>
                       <FormControl>
-                        <SelectTrigger data-testid="select-user-role">
+                        <SelectTrigger data-testid="select-create-user-role">
                           <SelectValue />
                         </SelectTrigger>
                       </FormControl>
@@ -117,6 +187,61 @@ export default function ManageUsersPage() {
         </Dialog>
       </div>
 
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+          </DialogHeader>
+          <Form {...editForm}>
+            <form onSubmit={editForm.handleSubmit((d) => editingUser && editMutation.mutate({ ...d, id: editingUser.id }))} className="space-y-4">
+              <FormField control={editForm.control} name="name" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Full Name</FormLabel>
+                  <FormControl><Input placeholder="Jane Doe" data-testid="input-edit-user-name" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={editForm.control} name="email" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email</FormLabel>
+                  <FormControl><Input type="email" placeholder="jane@company.com" data-testid="input-edit-user-email" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={editForm.control} name="password" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Password</FormLabel>
+                  <FormControl><Input type="password" placeholder="Leave blank to keep current" data-testid="input-edit-user-password" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <FormField control={editForm.control} name="role" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Role</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger data-testid="select-edit-user-role">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {userRoleEnum.map((r) => (
+                        <SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
+              <Button type="submit" className="w-full" disabled={editMutation.isPending} data-testid="button-save-user">
+                {editMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Pencil className="h-4 w-4 mr-2" />}
+                Save Changes
+              </Button>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
       {isLoading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
@@ -134,6 +259,7 @@ export default function ManageUsersPage() {
         <div className="space-y-3">
           {(users ?? []).map((u) => {
             const initials = u.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
+            const isSelf = currentUser?.id === u.id;
             return (
               <Card key={u.id} data-testid={`card-user-${u.id}`}>
                 <CardContent className="p-4">
@@ -142,10 +268,48 @@ export default function ManageUsersPage() {
                       <AvatarFallback className="text-xs">{initials}</AvatarFallback>
                     </Avatar>
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm">{u.name}</p>
-                      <p className="text-xs text-muted-foreground">{u.email}</p>
+                      <p className="font-medium text-sm" data-testid={`text-user-name-${u.id}`}>{u.name}</p>
+                      <p className="text-xs text-muted-foreground" data-testid={`text-user-email-${u.id}`}>{u.email}</p>
                     </div>
-                    <Badge variant="outline" className="text-xs">{ROLE_LABELS[u.role] || u.role}</Badge>
+                    <Badge variant="outline" className="text-xs" data-testid={`badge-user-role-${u.id}`}>{ROLE_LABELS[u.role] || u.role}</Badge>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      data-testid={`button-edit-user-${u.id}`}
+                      onClick={() => openEditDialog(u)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    {!isSelf && (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            data-testid={`button-delete-user-${u.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete User</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Are you sure you want to delete {u.name}? This action cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel data-testid={`button-cancel-delete-${u.id}`}>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              data-testid={`button-confirm-delete-${u.id}`}
+                              onClick={() => deleteMutation.mutate(u.id)}
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
                   </div>
                 </CardContent>
               </Card>

@@ -76,6 +76,16 @@ The application features a modern full-stack architecture. The **frontend** is b
     *   Schema defines tables for users, leads, call logs, notes, email logs, email events, email templates, AI prompts, AI research, signup events, inbound emails, and system settings.
     *   Unique indexing ensures data integrity, especially for leads.
 
+## Recent Changes (Feb 2026)
+*   **User Management:** Admins can now edit (name, email, role, password) and delete users from the Manage Users page.
+*   **Lead Management:** All Vendor Leads page now supports inline editing, single delete, checkbox multi-select, and bulk delete operations.
+*   **Assign Batch:** Reworked to show a filterable lead list (state, category, rating, phone, email, unassigned) with checkbox selection for batch assignment to callers.
+*   **Email Templates:** Added "Create New Template" with name and sequence number fields for ordering templates (sequence 1 = first email after call, etc.).
+*   **AI Prompts:** Vendor and buyer pipelines now have separate dedicated prompt templates shown side by side, with create button for missing pipelines.
+*   **Settings Hub:** Added clarifying descriptions for retry settings, explaining retry behavior, delay spacing, and business hours warning.
+*   **Lead Detail:** Added previous/next navigation buttons to move between leads without returning to the list.
+*   **Schema:** Added `name` (text) and `sequence` (integer) columns to `email_templates` table.
+
 ## External Dependencies
 *   **SendGrid:** For sending outbound emails and tracking email events via webhooks.
 *   **Replit AI Integrations (OpenAI):** Utilized by the AI Research Engine for generating structured call preparation content.

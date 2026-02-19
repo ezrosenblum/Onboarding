@@ -209,8 +209,10 @@ export const emailTemplates = pgTable("email_templates", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   pipelineType: text("pipeline_type").notNull().$type<PipelineType>().default("vendor"),
   templateType: text("template_type").notNull().$type<EmailTemplateType>(),
+  name: text("name").notNull().default(""),
   subject: text("subject").notNull(),
   bodyHtml: text("body_html").notNull(),
+  sequence: integer("sequence").notNull().default(0),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
   uniqueIndex("email_templates_pipeline_template_unique").on(table.pipelineType, table.templateType),

@@ -169,11 +169,15 @@ export default function SettingsHubPage() {
               <h3 className="font-semibold flex items-center gap-2">
                 <RefreshCw className="h-4 w-4 text-muted-foreground" /> Retry Settings
               </h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                When a call results in No Answer, Voicemail, Gatekeeper, or Call Dropped, the lead is automatically scheduled for retry. Retried leads appear in the RETRY tab (not as new leads). The delay spaces out attempts so callers are not calling the same lead back-to-back.
+              </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="max-retry-attempts">Max Retry Attempts</Label>
+                  <p className="text-xs text-muted-foreground">How many times a lead will be retried before being marked unreachable</p>
                   <Input
                     id="max-retry-attempts"
                     type="number"
@@ -185,6 +189,7 @@ export default function SettingsHubPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="retry-delay-days">Retry Delay (Business Days)</Label>
+                  <p className="text-xs text-muted-foreground">Number of business days to wait between retry attempts (weekends excluded)</p>
                   <Input
                     id="retry-delay-days"
                     type="number"
@@ -220,6 +225,7 @@ export default function SettingsHubPage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="warning-window">Business Hours Warning Window (Minutes)</Label>
+                <p className="text-xs text-muted-foreground">Callers see a warning if the lead's local time is within this many minutes of closing time (e.g., 15 = warn if less than 15 min left)</p>
                 <div className="max-w-xs">
                   <Input
                     id="warning-window"

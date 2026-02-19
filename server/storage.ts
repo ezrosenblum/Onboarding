@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, isNull, ilike, sql, desc, asc, lte, gte, count } from "drizzle-orm";
+import { eq, and, isNull, ilike, sql, desc, asc, lte, gte, count, inArray } from "drizzle-orm";
 import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearch, signupEvents, systemSettings, callEvents, inboundEmails } from "@shared/schema";
 import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchRecord, AiOutputJson, SignupEvent, SystemSetting, CallEvent } from "@shared/schema";
 import bcrypt from "bcryptjs";
@@ -113,6 +113,10 @@ export interface IStorage {
   setSetting(key: string, value: string): Promise<void>;
   getUserCount(): Promise<number>;
   updateUser(id: number, data: Partial<User>): Promise<User | undefined>;
+  deleteUser(id: number): Promise<void>;
+  deleteLead(id: number): Promise<void>;
+  bulkDeleteLeads(ids: number[]): Promise<number>;
+  getFilteredLeads(filters: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean; unassigned?: boolean }): Promise<Lead[]>;
 
   getCallLogByTwilioSid(sid: string): Promise<CallLog | undefined>;
   updateCallLog(id: number, data: Partial<CallLog>): Promise<CallLog | undefined>;
@@ -480,8 +484,11 @@ export class DatabaseStorage implements IStorage {
   async upsertEmailTemplate(data: InsertEmailTemplate): Promise<EmailTemplate> {
     const existing = await this.getEmailTemplate(data.pipelineType as string, data.templateType as string);
     if (existing) {
+      const updateSet: any = { subject: data.subject, bodyHtml: data.bodyHtml, updatedAt: new Date() };
+      if (data.name !== undefined) updateSet.name = data.name;
+      if (data.sequence !== undefined) updateSet.sequence = data.sequence;
       const [updated] = await db.update(emailTemplates)
-        .set({ subject: data.subject, bodyHtml: data.bodyHtml, updatedAt: new Date() })
+        .set(updateSet)
         .where(eq(emailTemplates.id, existing.id))
         .returning();
       return updated;
@@ -906,6 +913,40 @@ export class DatabaseStorage implements IStorage {
   async updateUser(id: number, data: Partial<User>): Promise<User | undefined> {
     const [user] = await db.update(users).set(data as any).where(eq(users.id, id)).returning();
     return user;
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    await db.update(leads).set({ assignedToUserId: null }).where(eq(leads.assignedToUserId, id));
+    await db.delete(users).where(eq(users.id, id));
+  }
+
+  async deleteLead(id: number): Promise<void> {
+    await db.delete(callLogs).where(eq(callLogs.leadId, id));
+    await db.delete(leadNotes).where(eq(leadNotes.leadId, id));
+    await db.delete(emailLogs).where(eq(emailLogs.leadId, id));
+    await db.delete(inboundEmails).where(eq(inboundEmails.leadId, id));
+    await db.delete(leads).where(eq(leads.id, id));
+  }
+
+  async bulkDeleteLeads(ids: number[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    await db.delete(callLogs).where(inArray(callLogs.leadId, ids));
+    await db.delete(leadNotes).where(inArray(leadNotes.leadId, ids));
+    await db.delete(emailLogs).where(inArray(emailLogs.leadId, ids));
+    await db.delete(inboundEmails).where(inArray(inboundEmails.leadId, ids));
+    const deleted = await db.delete(leads).where(inArray(leads.id, ids)).returning();
+    return deleted.length;
+  }
+
+  async getFilteredLeads(filters: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean; unassigned?: boolean }): Promise<Lead[]> {
+    const conditions: any[] = [eq(leads.pipelineType, "vendor")];
+    if (filters.unassigned) conditions.push(sql`${leads.assignedToUserId} IS NULL`);
+    if (filters.state) conditions.push(sql`LOWER(${leads.state}) = LOWER(${filters.state})`);
+    if (filters.category) conditions.push(sql`LOWER(${leads.categoryKeyword}) LIKE LOWER(${'%' + filters.category + '%'})`);
+    if (filters.minRating) conditions.push(gte(leads.rating, String(filters.minRating)));
+    if (filters.hasPhone) conditions.push(sql`${leads.phone} IS NOT NULL AND ${leads.phone} != ''`);
+    if (filters.hasEmail) conditions.push(sql`(${leads.scrapedEmail} IS NOT NULL AND ${leads.scrapedEmail} != '') OR (${leads.confirmedEmail} IS NOT NULL AND ${leads.confirmedEmail} != '')`);
+    return db.select().from(leads).where(and(...conditions)).orderBy(leads.id);
   }
 
   async getCallLogByTwilioSid(sid: string): Promise<CallLog | undefined> {

@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useRoute } from "wouter";
+import { useRoute, useLocation } from "wouter";
 import type { Lead, CallLog, LeadNote, EmailLog, AiResearchRecord, AiOutputJson } from "@shared/schema";
 import { callOutcomeEnum } from "@shared/schema";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -25,7 +25,8 @@ import {
   Clock, Save, Plus, Loader2, ArrowLeft, ExternalLink, PhoneCall,
   Send, AlertCircle, Sparkles, RefreshCw, AlertTriangle, Copy,
   CheckCircle2, ListChecks, HelpCircle, Shield, ArrowRight,
-  Play, FileText, Headphones, Monitor, Smartphone, ChevronDown, ChevronUp
+  Play, FileText, Headphones, Monitor, Smartphone, ChevronDown, ChevronUp,
+  ChevronLeft, ChevronRight
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
@@ -64,6 +65,12 @@ export default function LeadDetailPage() {
   const leadId = params?.id;
   const { user } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
+
+  const { data: allLeads } = useQuery<Lead[]>({ queryKey: ["/api/leads"] });
+  const currentIndex = allLeads?.findIndex((l) => String(l.id) === String(leadId)) ?? -1;
+  const prevLead = currentIndex > 0 ? allLeads![currentIndex - 1] : null;
+  const nextLead = allLeads && currentIndex >= 0 && currentIndex < allLeads.length - 1 ? allLeads[currentIndex + 1] : null;
 
   const { data: lead, isLoading } = useQuery<Lead>({ queryKey: ["/api/leads", leadId], enabled: !!leadId });
   const { data: callLogs } = useQuery<CallLog[]>({ queryKey: ["/api/leads", leadId, "calls"], enabled: !!leadId });
@@ -249,6 +256,34 @@ export default function LeadDetailPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
+      {allLeads && allLeads.length > 0 && currentIndex >= 0 && (
+        <div className="flex items-center justify-between gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!prevLead}
+            onClick={() => prevLead && setLocation(`/leads/${prevLead.id}`)}
+            data-testid="button-prev-lead"
+          >
+            <ChevronLeft className="h-4 w-4 mr-1" />
+            Previous Lead
+          </Button>
+          <span className="text-sm text-muted-foreground" data-testid="text-lead-position">
+            Lead {currentIndex + 1} of {allLeads.length}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!nextLead}
+            onClick={() => nextLead && setLocation(`/leads/${nextLead.id}`)}
+            data-testid="button-next-lead"
+          >
+            Next Lead
+            <ChevronRight className="h-4 w-4 ml-1" />
+          </Button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 flex-wrap">
         <Link href={user?.role === "admin" ? "/leads" : "/"}>
           <Button variant="ghost" size="icon" data-testid="button-back">

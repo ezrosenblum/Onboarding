@@ -11,7 +11,7 @@ import type { InsertLead, CallOutcome, EmailTemplateType } from "@shared/schema"
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { buildEmailContent, sendEmail, getDefaultTemplates, extractLeadTokenFromReplyTo, buildReplyToAddress } from "./email-service";
-import { generateStructuredResearch, getDefaultAiPrompt, isAiConfigured, buildFinalPrompt } from "./services/aiProvider";
+import { generateStructuredResearch, getDefaultAiPrompt, getDefaultAiPromptForPipeline, isAiConfigured, buildFinalPrompt } from "./services/aiProvider";
 import {
   isTwilioConfigured,
   generateAccessToken,
@@ -168,6 +168,32 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/users/:id", requireAdmin, async (req, res) => {
+    const userId = parseInt(req.params.id);
+    const { name, email, role, password } = req.body;
+    const update: any = {};
+    if (name) update.name = name;
+    if (email) update.email = email;
+    if (role) update.role = role;
+    if (password) {
+      const bcrypt = await import("bcryptjs");
+      update.passwordHash = await bcrypt.hash(password, 10);
+    }
+    const user = await storage.updateUser(userId, update);
+    if (!user) return res.status(404).json({ message: "User not found" });
+    const { passwordHash, ...safe } = user;
+    res.json(safe);
+  });
+
+  app.delete("/api/users/:id", requireAdmin, async (req, res) => {
+    const userId = parseInt(req.params.id);
+    if (userId === req.user!.id) {
+      return res.status(400).json({ message: "Cannot delete yourself" });
+    }
+    await storage.deleteUser(userId);
+    res.json({ ok: true });
+  });
+
   app.get("/api/leads", requireAuth, async (req, res) => {
     const leads = await storage.getAllLeads("vendor");
     res.json(leads);
@@ -227,13 +253,51 @@ export async function registerRoutes(
       return res.status(403).json({ message: "Not authorized to edit this lead" });
     }
 
-    const { phone, confirmedEmail, bestTimeToCall } = req.body;
-    const updated = await storage.updateLead(id, {
-      ...(phone !== undefined && { phone }),
-      ...(confirmedEmail !== undefined && { confirmedEmail }),
-      ...(bestTimeToCall !== undefined && { bestTimeToCall }),
-    });
+    const { phone, confirmedEmail, bestTimeToCall, businessName, contactName, scrapedEmail, state, categoryKeyword, website, rating, statusCall, statusSignup, assignedToUserId } = req.body;
+    const updateData: any = {};
+    if (phone !== undefined) updateData.phone = phone;
+    if (confirmedEmail !== undefined) updateData.confirmedEmail = confirmedEmail;
+    if (bestTimeToCall !== undefined) updateData.bestTimeToCall = bestTimeToCall;
+    if (isAdmin) {
+      if (businessName !== undefined) updateData.businessName = businessName;
+      if (contactName !== undefined) updateData.contactName = contactName;
+      if (scrapedEmail !== undefined) updateData.scrapedEmail = scrapedEmail;
+      if (state !== undefined) updateData.state = state;
+      if (categoryKeyword !== undefined) updateData.categoryKeyword = categoryKeyword;
+      if (website !== undefined) updateData.website = website;
+      if (rating !== undefined) updateData.rating = rating;
+      if (statusCall !== undefined) updateData.statusCall = statusCall;
+      if (statusSignup !== undefined) updateData.statusSignup = statusSignup;
+      if (assignedToUserId !== undefined) updateData.assignedToUserId = assignedToUserId;
+    }
+    const updated = await storage.updateLead(id, updateData);
     res.json(updated);
+  });
+
+  app.delete("/api/leads/:id", requireAdmin, async (req, res) => {
+    await storage.deleteLead(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
+  app.post("/api/leads/bulk-delete", requireAdmin, async (req, res) => {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ message: "Must provide an array of lead ids" });
+    }
+    const count = await storage.bulkDeleteLeads(ids);
+    res.json({ deleted: count });
+  });
+
+  app.get("/api/leads/filtered", requireAdmin, async (req, res) => {
+    const filters: any = {};
+    if (req.query.state) filters.state = req.query.state as string;
+    if (req.query.category) filters.category = req.query.category as string;
+    if (req.query.minRating) filters.minRating = parseFloat(req.query.minRating as string);
+    if (req.query.hasPhone === "true") filters.hasPhone = true;
+    if (req.query.hasEmail === "true") filters.hasEmail = true;
+    if (req.query.unassigned === "true") filters.unassigned = true;
+    const leads = await storage.getFilteredLeads(filters);
+    res.json(leads);
   });
 
   app.post("/api/leads/preview", requireAdmin, upload.single("file"), (req, res) => {
@@ -652,8 +716,10 @@ export async function registerRoutes(
         id: null,
         pipelineType: pipeline,
         templateType: type,
+        name: "",
         subject: defaults[type].subject,
         bodyHtml: defaults[type].bodyHtml,
+        sequence: 0,
         updatedAt: null,
         isDefault: true,
       };
@@ -662,19 +728,22 @@ export async function registerRoutes(
   });
 
   app.post("/api/templates", requireAdmin, async (req, res) => {
-    const { pipelineType, templateType, subject, bodyHtml } = req.body;
+    const { pipelineType, templateType, subject, bodyHtml, name, sequence } = req.body;
     if (!pipelineType || !templateType || !subject || !bodyHtml) {
       return res.status(400).json({ message: "pipelineType, templateType, subject, bodyHtml are required" });
     }
     if (!(emailTemplateTypeEnum as readonly string[]).includes(templateType)) {
       return res.status(400).json({ message: "Invalid template type" });
     }
-    const template = await storage.upsertEmailTemplate({
+    const templateData: any = {
       pipelineType,
       templateType,
       subject,
       bodyHtml,
-    });
+    };
+    if (name !== undefined) templateData.name = name;
+    if (sequence !== undefined) templateData.sequence = parseInt(sequence) || 0;
+    const template = await storage.upsertEmailTemplate(templateData);
     res.json(template);
   });
 
@@ -794,14 +863,14 @@ export async function registerRoutes(
 
   app.get("/api/admin/ai-prompts", requireAdmin, async (_req, res) => {
     const prompts = await storage.getAllAiPrompts();
-    const defaults: Record<string, string> = { vendor: getDefaultAiPrompt() };
-    const result = ["vendor"].map((pipeline) => {
+    const pipelineTypes = ["vendor", "buyer"] as const;
+    const result = pipelineTypes.map((pipeline) => {
       const saved = prompts.find((p) => p.pipelineType === pipeline);
       if (saved) return { ...saved, isDefault: false };
       return {
         id: null,
         pipelineType: pipeline,
-        promptTemplate: defaults[pipeline],
+        promptTemplate: getDefaultAiPromptForPipeline(pipeline),
         version: 0,
         updatedByUserId: null,
         updatedAt: null,
@@ -817,6 +886,9 @@ export async function registerRoutes(
     if (!pipelineType || !promptTemplate?.trim()) {
       return res.status(400).json({ message: "pipelineType and promptTemplate are required" });
     }
+    if (!["vendor", "buyer"].includes(pipelineType)) {
+      return res.status(400).json({ message: "Invalid pipeline type" });
+    }
     const prompt = await storage.upsertAiPrompt(pipelineType, promptTemplate.trim(), req.user!.id);
     res.json(prompt);
   });
@@ -826,11 +898,10 @@ export async function registerRoutes(
     if (!pipelineType) {
       return res.status(400).json({ message: "pipelineType is required" });
     }
-    const defaults: Record<string, string> = { vendor: getDefaultAiPrompt() };
-    const defaultPrompt = defaults[pipelineType];
-    if (!defaultPrompt) {
+    if (!["vendor", "buyer"].includes(pipelineType)) {
       return res.status(400).json({ message: "Invalid pipeline type" });
     }
+    const defaultPrompt = getDefaultAiPromptForPipeline(pipelineType);
     const prompt = await storage.upsertAiPrompt(pipelineType, defaultPrompt, req.user!.id);
     res.json(prompt);
   });

@@ -24,11 +24,34 @@ Rules:
 - objections should address common vendor onboarding concerns
 - suggested_next_step should be actionable`;
 
+const DEFAULT_BUYER_PROMPT = `You are a sales research assistant for SupplyStreamline, a buyer onboarding platform. Given the following buyer lead information, generate a personalized call preparation package.
+
+Your response must be ONLY valid JSON matching this exact schema (no markdown, no extra text):
+{
+  "opener_script": "A warm, personalized 10-15 second spoken opener script (3-5 sentences) referencing specific company details",
+  "summary_bullets": ["Up to 3 key bullet points about this company that a caller should know"],
+  "discovery_questions": ["3-5 tailored discovery questions based on the company's profile"],
+  "objections": ["2-3 likely objections with suggested responses"],
+  "suggested_next_step": "The recommended next action after the call"
+}
+
+Rules:
+- opener_script must reference the company name and at least one specific detail (location, category, rating, etc.)
+- summary_bullets should highlight buying needs or procurement patterns
+- discovery_questions should be open-ended and relevant to their purchasing requirements
+- objections should address common buyer onboarding concerns
+- suggested_next_step should be actionable`;
+
 const JSON_OUTPUT_INSTRUCTIONS = `
 
 IMPORTANT: Respond with ONLY valid JSON matching the schema above. No markdown code blocks, no explanations, no extra text before or after the JSON.`;
 
 export function getDefaultAiPrompt(): string {
+  return DEFAULT_VENDOR_PROMPT;
+}
+
+export function getDefaultAiPromptForPipeline(pipelineType: string): string {
+  if (pipelineType === "buyer") return DEFAULT_BUYER_PROMPT;
   return DEFAULT_VENDOR_PROMPT;
 }
 
