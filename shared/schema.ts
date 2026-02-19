@@ -134,6 +134,10 @@ export const callLogs = pgTable("call_logs", {
   transcriptText: text("transcript_text"),
   transcriptProvider: text("transcript_provider"),
   transcriptError: text("transcript_error"),
+  coachNote: text("coach_note"),
+  qualityTag: text("quality_tag"),
+  coachNoteByUserId: integer("coach_note_by_user_id").references(() => users.id),
+  coachNoteAt: timestamp("coach_note_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [
   index("call_logs_twilio_sid_idx").on(table.twilioCallSid),

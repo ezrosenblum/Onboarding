@@ -20,6 +20,7 @@ import EmailTemplatesPage from "@/pages/admin/email-templates";
 import AiPromptsPage from "@/pages/admin/ai-prompts";
 import SignupMetricsPage from "@/pages/admin/signup-metrics";
 import PerformanceDashboardPage from "@/pages/admin/performance-dashboard";
+import CallerDetailPage from "@/pages/admin/caller-detail";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
@@ -52,6 +53,7 @@ function AppRouter() {
       <Route path="/admin/ai-prompts">{() => <AdminRoute component={AiPromptsPage} />}</Route>
       <Route path="/admin/signup-metrics">{() => <AdminRoute component={SignupMetricsPage} />}</Route>
       <Route path="/admin/dashboard">{() => <AdminRoute component={PerformanceDashboardPage} />}</Route>
+      <Route path="/admin/caller/:userId">{() => <AdminRoute component={CallerDetailPage} />}</Route>
       <Route component={NotFound} />
     </Switch>
   );

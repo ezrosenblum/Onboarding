@@ -1271,6 +1271,129 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  // ──────────── Stage 7: Admin Ops Layer ────────────
+
+  app.get("/api/admin/settings", requireAuth, requireAdmin, async (_req, res) => {
+    const settings = await storage.getAllSettings();
+    res.json(settings);
+  });
+
+  app.put("/api/admin/settings", requireAuth, requireAdmin, async (req, res) => {
+    const { key, value } = req.body;
+    if (!key || value === undefined) {
+      return res.status(400).json({ message: "key and value are required" });
+    }
+    await storage.setSetting(key, String(value));
+    res.json({ success: true });
+  });
+
+  app.get("/api/admin/pipeline-health", requireAuth, requireAdmin, async (_req, res) => {
+    const health = await storage.getPipelineHealth();
+    res.json(health);
+  });
+
+  app.get("/api/admin/call-review", requireAuth, requireAdmin, async (req, res) => {
+    const filters = {
+      callerId: req.query.callerId ? parseInt(req.query.callerId as string) : undefined,
+      outcome: (req.query.outcome as string) || undefined,
+      dateFrom: (req.query.dateFrom as string) || undefined,
+      dateTo: (req.query.dateTo as string) || undefined,
+      hasRecording: req.query.hasRecording === "true" ? true : req.query.hasRecording === "false" ? false : undefined,
+      qualityTag: (req.query.qualityTag as string) || undefined,
+      limit: Math.min(parseInt(req.query.limit as string) || 50, 200),
+      offset: parseInt(req.query.offset as string) || 0,
+    };
+    const rows = await storage.getCallReviewQueue(filters);
+    res.json(rows);
+  });
+
+  app.put("/api/admin/call/:callLogId/coach", requireAuth, requireAdmin, async (req, res) => {
+    const callLogId = parseInt(req.params.callLogId);
+    const user = req.user as any;
+    const { coachNote, qualityTag } = req.body;
+
+    if (qualityTag !== undefined && qualityTag !== null && !["great", "needs_improvement"].includes(qualityTag)) {
+      return res.status(400).json({ message: "qualityTag must be 'great', 'needs_improvement', or null" });
+    }
+
+    const updated = await storage.updateCallLog(callLogId, {
+      coachNote: coachNote || null,
+      qualityTag: qualityTag || null,
+      coachNoteByUserId: user.id,
+      coachNoteAt: new Date(),
+    } as any);
+
+    if (!updated) {
+      return res.status(404).json({ message: "Call log not found" });
+    }
+
+    res.json(updated);
+  });
+
+  function arrayToCsv(data: any[]): string {
+    if (data.length === 0) return "";
+    const headers = Object.keys(data[0]);
+    const escapeCsvField = (field: any): string => {
+      if (field === null || field === undefined) return "";
+      const str = typeof field === "object" ? JSON.stringify(field) : String(field);
+      if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+        return '"' + str.replace(/"/g, '""') + '"';
+      }
+      return str;
+    };
+    const lines = [headers.join(",")];
+    for (const row of data) {
+      lines.push(headers.map((h) => escapeCsvField(row[h])).join(","));
+    }
+    return lines.join("\n");
+  }
+
+  app.get("/api/admin/export/leads", requireAuth, requireAdmin, async (_req, res) => {
+    const allLeads = await storage.getAllLeads();
+    const csv = arrayToCsv(allLeads);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="leads-export.csv"');
+    res.send(csv);
+  });
+
+  app.get("/api/admin/export/call-logs", requireAuth, requireAdmin, async (_req, res) => {
+    const allCallLogs = await storage.getAllCallLogs();
+    const csv = arrayToCsv(allCallLogs);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="call-logs-export.csv"');
+    res.send(csv);
+  });
+
+  app.get("/api/admin/export/email-logs", requireAuth, requireAdmin, async (_req, res) => {
+    const allEmailLogs = await storage.getAllEmailLogs();
+    const csv = arrayToCsv(allEmailLogs);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="email-logs-export.csv"');
+    res.send(csv);
+  });
+
+  app.get("/api/admin/export/signups", requireAuth, requireAdmin, async (_req, res) => {
+    const allSignups = await storage.getAllSignupEvents();
+    const csv = arrayToCsv(allSignups);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="signups-export.csv"');
+    res.send(csv);
+  });
+
+  app.get("/api/admin/caller/:userId/detail", requireAuth, requireAdmin, async (req, res) => {
+    const userId = parseInt(req.params.userId);
+    const range = (req.query.range as string) || "month";
+    if (!["today", "week", "month"].includes(range)) {
+      return res.status(400).json({ message: "Range must be today, week, or month" });
+    }
+    try {
+      const detail = await storage.getCallerDetail(userId, range as "today" | "week" | "month");
+      res.json(detail);
+    } catch (err: any) {
+      res.status(404).json({ message: err.message || "User not found" });
+    }
+  });
+
   return httpServer;
 }
 

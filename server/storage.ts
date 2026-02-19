@@ -116,6 +116,42 @@ export interface IStorage {
   createCallEvent(data: { callLogId: number; twilioCallSid?: string; eventType: string; raw?: any }): Promise<CallEvent>;
   getCallEventsByCallLogId(callLogId: number): Promise<CallEvent[]>;
   getPendingTranscriptions(): Promise<CallLog[]>;
+
+  getAllSettings(): Promise<Record<string, string>>;
+  getPipelineHealth(): Promise<{
+    totalUncontacted: number;
+    untouchedAssigned: number;
+    retryQueueSize: number;
+    unreachableCount: number;
+    activePending: number;
+    clickedNotSignedUp: number;
+  }>;
+  getCallReviewQueue(filters: {
+    callerId?: number;
+    outcome?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    hasRecording?: boolean;
+    qualityTag?: string;
+    limit: number;
+    offset: number;
+  }): Promise<any[]>;
+  getAllCallLogs(): Promise<CallLog[]>;
+  getAllEmailLogs(): Promise<EmailLog[]>;
+  getAllSignupEvents(): Promise<SignupEvent[]>;
+  getCallerDetail(userId: number, range: "today" | "week" | "month"): Promise<{
+    user: { id: number; name: string; email: string; role: string; dailyCallTarget: number | null };
+    metrics: {
+      totalCalls: number;
+      totalEmails: number;
+      totalSignups: number;
+      callToEmailPct: number;
+      clickToSignupPct: number;
+      unreachableRate: number;
+      outcomeDistribution: { outcome: string; count: number }[];
+    };
+    dailyTrend: { date: string; calls: number; emails: number; signups: number }[];
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -856,6 +892,267 @@ export class DatabaseStorage implements IStorage {
         sql`${callLogs.recordingUrl} IS NOT NULL`,
       )
     ).limit(5);
+  }
+
+  async getAllSettings(): Promise<Record<string, string>> {
+    const rows = await db.select().from(systemSettings);
+    const result: Record<string, string> = {};
+    for (const row of rows) {
+      result[row.key] = row.value;
+    }
+    return result;
+  }
+
+  async getPipelineHealth(): Promise<{
+    totalUncontacted: number;
+    untouchedAssigned: number;
+    retryQueueSize: number;
+    unreachableCount: number;
+    activePending: number;
+    clickedNotSignedUp: number;
+  }> {
+    const now = new Date();
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+
+    const [totalUncontactedR, untouchedAssignedR, retryQueueR, unreachableR, activePendingR, clickedNotSignedUpR] = await Promise.all([
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(eq(leads.statusCall, "NOT_CALLED")),
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(and(
+          sql`${leads.assignedToUserId} IS NOT NULL`,
+          eq(leads.statusCall, "NOT_CALLED"),
+          lte(leads.assignedAt, threeDaysAgo)
+        )),
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(and(
+          sql`${leads.retryNextEligibleAt} IS NOT NULL`,
+          lte(leads.retryNextEligibleAt, now)
+        )),
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(eq(leads.unreachable, true)),
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(and(
+          sql`${leads.statusCall} IN ('SPOKE_SEND_INFO', 'SPOKE_FOLLOW_UP', 'SPOKE_INTERESTED', 'SPOKE_NOT_INTERESTED')`,
+          eq(leads.statusEmail, "NOT_SENT")
+        )),
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(and(
+          eq(leads.statusEmail, "CLICKED"),
+          sql`${leads.statusSignup} != 'SIGNED_UP'`
+        )),
+    ]);
+
+    return {
+      totalUncontacted: Number(totalUncontactedR[0].count),
+      untouchedAssigned: Number(untouchedAssignedR[0].count),
+      retryQueueSize: Number(retryQueueR[0].count),
+      unreachableCount: Number(unreachableR[0].count),
+      activePending: Number(activePendingR[0].count),
+      clickedNotSignedUp: Number(clickedNotSignedUpR[0].count),
+    };
+  }
+
+  async getCallReviewQueue(filters: {
+    callerId?: number;
+    outcome?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    hasRecording?: boolean;
+    qualityTag?: string;
+    limit: number;
+    offset: number;
+  }): Promise<any[]> {
+    const conditions: any[] = [];
+
+    if (filters.callerId) {
+      conditions.push(eq(callLogs.userId, filters.callerId));
+    }
+    if (filters.outcome) {
+      conditions.push(eq(callLogs.outcome, filters.outcome as any));
+    }
+    if (filters.dateFrom) {
+      conditions.push(gte(callLogs.calledAt, new Date(filters.dateFrom)));
+    }
+    if (filters.dateTo) {
+      conditions.push(lte(callLogs.calledAt, new Date(filters.dateTo)));
+    }
+    if (filters.hasRecording === true) {
+      conditions.push(sql`${callLogs.recordingUrl} IS NOT NULL`);
+    } else if (filters.hasRecording === false) {
+      conditions.push(sql`${callLogs.recordingUrl} IS NULL`);
+    }
+    if (filters.qualityTag) {
+      conditions.push(eq(callLogs.qualityTag, filters.qualityTag));
+    }
+
+    const query = db.select({
+      id: callLogs.id,
+      leadId: callLogs.leadId,
+      userId: callLogs.userId,
+      calledAt: callLogs.calledAt,
+      outcome: callLogs.outcome,
+      durationSeconds: callLogs.durationSeconds,
+      notes: callLogs.notes,
+      withinBadTimingWindow: callLogs.withinBadTimingWindow,
+      twilioCallSid: callLogs.twilioCallSid,
+      callMode: callLogs.callMode,
+      callStatus: callLogs.callStatus,
+      recordingSid: callLogs.recordingSid,
+      recordingUrl: callLogs.recordingUrl,
+      recordingDurationSeconds: callLogs.recordingDurationSeconds,
+      transcriptStatus: callLogs.transcriptStatus,
+      transcriptText: callLogs.transcriptText,
+      coachNote: callLogs.coachNote,
+      qualityTag: callLogs.qualityTag,
+      coachNoteByUserId: callLogs.coachNoteByUserId,
+      coachNoteAt: callLogs.coachNoteAt,
+      createdAt: callLogs.createdAt,
+      callerName: users.name,
+      companyName: leads.companyName,
+    })
+      .from(callLogs)
+      .leftJoin(users, eq(callLogs.userId, users.id))
+      .leftJoin(leads, eq(callLogs.leadId, leads.id));
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const rows = whereClause
+      ? await query.where(whereClause).orderBy(desc(callLogs.calledAt)).limit(filters.limit).offset(filters.offset)
+      : await query.orderBy(desc(callLogs.calledAt)).limit(filters.limit).offset(filters.offset);
+
+    return rows;
+  }
+
+  async getAllCallLogs(): Promise<CallLog[]> {
+    return db.select().from(callLogs).orderBy(desc(callLogs.calledAt));
+  }
+
+  async getAllEmailLogs(): Promise<EmailLog[]> {
+    return db.select().from(emailLogs).orderBy(desc(emailLogs.createdAt));
+  }
+
+  async getAllSignupEvents(): Promise<SignupEvent[]> {
+    return db.select().from(signupEvents).orderBy(desc(signupEvents.receivedAt));
+  }
+
+  async getCallerDetail(userId: number, range: "today" | "week" | "month"): Promise<{
+    user: { id: number; name: string; email: string; role: string; dailyCallTarget: number | null };
+    metrics: {
+      totalCalls: number;
+      totalEmails: number;
+      totalSignups: number;
+      callToEmailPct: number;
+      clickToSignupPct: number;
+      unreachableRate: number;
+      outcomeDistribution: { outcome: string; count: number }[];
+    };
+    dailyTrend: { date: string; calls: number; emails: number; signups: number }[];
+  }> {
+    const now = new Date();
+    let startDate: Date;
+    if (range === "today") {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (range === "week") {
+      const day = now.getDay();
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day);
+    } else {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    const user = await this.getUserById(userId);
+    if (!user) throw new Error("User not found");
+
+    const [callCountR, emailCountR, signupCountR, clickedCountR, unreachableR, outcomeRows, dailyCallRows, dailyEmailRows, dailySignupRows] = await Promise.all([
+      db.select({ count: sql<number>`count(*)` }).from(callLogs)
+        .where(and(eq(callLogs.userId, userId), gte(callLogs.calledAt, startDate))),
+      db.select({ count: sql<number>`count(*)` }).from(emailLogs)
+        .where(and(eq(emailLogs.userId, userId), gte(emailLogs.createdAt, startDate))),
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(and(eq(leads.assignedToUserId, userId), eq(leads.statusSignup, "SIGNED_UP"), gte(leads.signedUpAt, startDate))),
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(and(eq(leads.assignedToUserId, userId), eq(leads.statusEmail, "CLICKED"))),
+      db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(and(eq(leads.assignedToUserId, userId), eq(leads.unreachable, true))),
+      db.select({
+        outcome: callLogs.outcome,
+        count: sql<number>`count(*)`,
+      }).from(callLogs)
+        .where(and(eq(callLogs.userId, userId), gte(callLogs.calledAt, startDate)))
+        .groupBy(callLogs.outcome),
+      db.select({
+        date: sql<string>`TO_CHAR(${callLogs.calledAt}, 'YYYY-MM-DD')`,
+        count: sql<number>`count(*)`,
+      }).from(callLogs)
+        .where(and(eq(callLogs.userId, userId), gte(callLogs.calledAt, startDate)))
+        .groupBy(sql`TO_CHAR(${callLogs.calledAt}, 'YYYY-MM-DD')`),
+      db.select({
+        date: sql<string>`TO_CHAR(${emailLogs.createdAt}, 'YYYY-MM-DD')`,
+        count: sql<number>`count(*)`,
+      }).from(emailLogs)
+        .where(and(eq(emailLogs.userId, userId), gte(emailLogs.createdAt, startDate)))
+        .groupBy(sql`TO_CHAR(${emailLogs.createdAt}, 'YYYY-MM-DD')`),
+      db.select({
+        date: sql<string>`TO_CHAR(${leads.signedUpAt}, 'YYYY-MM-DD')`,
+        count: sql<number>`count(*)`,
+      }).from(leads)
+        .where(and(eq(leads.assignedToUserId, userId), eq(leads.statusSignup, "SIGNED_UP"), gte(leads.signedUpAt, startDate)))
+        .groupBy(sql`TO_CHAR(${leads.signedUpAt}, 'YYYY-MM-DD')`),
+    ]);
+
+    const totalCalls = Number(callCountR[0].count);
+    const totalEmails = Number(emailCountR[0].count);
+    const totalSignups = Number(signupCountR[0].count);
+    const totalClicked = Number(clickedCountR[0].count);
+    const totalUnreachable = Number(unreachableR[0].count);
+    const totalAssigned = await db.select({ count: sql<number>`count(*)` }).from(leads)
+      .where(eq(leads.assignedToUserId, userId));
+    const totalAssignedCount = Number(totalAssigned[0].count);
+
+    const outcomeDistribution = outcomeRows.map(r => ({
+      outcome: r.outcome || "UNKNOWN",
+      count: Number(r.count),
+    }));
+
+    const dailyMap = new Map<string, { calls: number; emails: number; signups: number }>();
+    for (const r of dailyCallRows) {
+      const d = dailyMap.get(r.date) || { calls: 0, emails: 0, signups: 0 };
+      d.calls = Number(r.count);
+      dailyMap.set(r.date, d);
+    }
+    for (const r of dailyEmailRows) {
+      const d = dailyMap.get(r.date) || { calls: 0, emails: 0, signups: 0 };
+      d.emails = Number(r.count);
+      dailyMap.set(r.date, d);
+    }
+    for (const r of dailySignupRows) {
+      const d = dailyMap.get(r.date) || { calls: 0, emails: 0, signups: 0 };
+      d.signups = Number(r.count);
+      dailyMap.set(r.date, d);
+    }
+
+    const dailyTrend = Array.from(dailyMap.entries())
+      .map(([date, data]) => ({ date, ...data }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        dailyCallTarget: user.dailyCallTarget,
+      },
+      metrics: {
+        totalCalls,
+        totalEmails,
+        totalSignups,
+        callToEmailPct: totalCalls > 0 ? Math.round((totalEmails / totalCalls) * 1000) / 10 : 0,
+        clickToSignupPct: totalClicked > 0 ? Math.round((totalSignups / totalClicked) * 1000) / 10 : 0,
+        unreachableRate: totalAssignedCount > 0 ? Math.round((totalUnreachable / totalAssignedCount) * 1000) / 10 : 0,
+        outcomeDistribution,
+      },
+      dailyTrend,
+    };
   }
 }
 
