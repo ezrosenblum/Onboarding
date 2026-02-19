@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Activity, Phone, Mail, MousePointerClick, Eye, UserCheck, TrendingUp, ArrowRight, AlertTriangle, Clock, MapPin, Tag, Info, ChevronDown, ChevronUp, BarChart3 } from "lucide-react";
+import { Activity, Phone, Mail, Reply, MousePointerClick, Eye, UserCheck, TrendingUp, ArrowRight, AlertTriangle, Clock, MapPin, Tag, Info, ChevronDown, ChevronUp, BarChart3 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "wouter";
 
@@ -43,6 +43,7 @@ interface CallerPerformance {
   userName: string;
   callsMade: number;
   emailsSent: number;
+  repliesSent: number;
   emailsOpened: number;
   emailsClicked: number;
   emailsBounced: number;
@@ -57,6 +58,7 @@ interface PerformanceMetrics {
   totals: {
     calls: number;
     emails: number;
+    repliesSent: number;
     emailsOpened: number;
     emailsClicked: number;
     emailsBounced: number;
@@ -66,6 +68,7 @@ interface PerformanceMetrics {
     callToEmailPct: number;
     emailOpenPct: number;
     emailClickPct: number;
+    replyRatePct: number;
     clickToSignupPct: number;
     callToSignupPct: number;
   };
@@ -167,9 +170,10 @@ export default function PerformanceDashboardPage() {
         </div>
       ) : metrics ? (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard icon={Phone} label={`Calls ${rangeLabel}`} value={metrics.totals.calls} testId="text-total-calls" />
             <StatCard icon={Mail} label="Emails Sent" value={metrics.totals.emails} testId="text-total-emails" />
+            <StatCard icon={Reply} label="Replies Sent" value={metrics.totals.repliesSent} subtext={`${metrics.rates.replyRatePct}% of emails`} testId="text-total-replies" />
             <StatCard icon={Eye} label="Emails Opened" value={metrics.totals.emailsOpened} testId="text-total-opened" />
             <StatCard icon={MousePointerClick} label="Emails Clicked" value={metrics.totals.emailsClicked} testId="text-total-clicked" />
             <StatCard icon={AlertTriangle} label="Emails Bounced" value={metrics.totals.emailsBounced} testId="text-total-bounced" />
@@ -218,6 +222,7 @@ export default function PerformanceDashboardPage() {
                         <th className="pb-2 pr-3 font-medium text-muted-foreground">Caller</th>
                         <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Calls</th>
                         <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Emails</th>
+                        <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Replies</th>
                         <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Call→Email</th>
                         <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Signups</th>
                         <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Click→Signup</th>
@@ -234,6 +239,9 @@ export default function PerformanceDashboardPage() {
                           </td>
                           <td className="py-3 pr-3 text-right">
                             <Badge variant="outline">{caller.emailsSent}</Badge>
+                          </td>
+                          <td className="py-3 pr-3 text-right">
+                            <Badge variant="outline">{caller.repliesSent}</Badge>
                           </td>
                           <td className="py-3 pr-3 text-right text-muted-foreground">{caller.callToEmailPct}%</td>
                           <td className="py-3 pr-3 text-right">

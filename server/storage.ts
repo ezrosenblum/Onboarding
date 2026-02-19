@@ -9,6 +9,7 @@ export interface CallerPerformance {
   userName: string;
   callsMade: number;
   emailsSent: number;
+  repliesSent: number;
   emailsOpened: number;
   emailsClicked: number;
   emailsBounced: number;
@@ -23,6 +24,7 @@ export interface PerformanceMetrics {
   totals: {
     calls: number;
     emails: number;
+    repliesSent: number;
     emailsOpened: number;
     emailsClicked: number;
     emailsBounced: number;
@@ -32,6 +34,7 @@ export interface PerformanceMetrics {
     callToEmailPct: number;
     emailOpenPct: number;
     emailClickPct: number;
+    replyRatePct: number;
     clickToSignupPct: number;
     callToSignupPct: number;
   };
@@ -669,7 +672,7 @@ export class DatabaseStorage implements IStorage {
       startDate = new Date(now.getFullYear(), now.getMonth(), 1);
     }
 
-    const [callRows, emailRows, eventRows, signupRows, unreachableRows, avgAttemptsRows, signupsByStateRows, signupsByCategoryRows, timingRows, hourlyRows] = await Promise.all([
+    const [callRows, emailRows, replyRows, eventRows, signupRows, unreachableRows, avgAttemptsRows, signupsByStateRows, signupsByCategoryRows, timingRows, hourlyRows] = await Promise.all([
       db.select({
         userId: callLogs.userId,
         userName: users.name,
@@ -686,6 +689,15 @@ export class DatabaseStorage implements IStorage {
       }).from(emailLogs)
         .leftJoin(users, eq(emailLogs.userId, users.id))
         .where(gte(emailLogs.createdAt, startDate))
+        .groupBy(emailLogs.userId, users.name),
+
+      db.select({
+        userId: emailLogs.userId,
+        userName: users.name,
+        cnt: count(emailLogs.id),
+      }).from(emailLogs)
+        .leftJoin(users, eq(emailLogs.userId, users.id))
+        .where(and(gte(emailLogs.createdAt, startDate), eq(emailLogs.isReply, true)))
         .groupBy(emailLogs.userId, users.name),
 
       db.select({
@@ -769,12 +781,12 @@ export class DatabaseStorage implements IStorage {
     const callerMap = new Map<number, CallerPerformance>();
     const getOrCreate = (userId: number, userName: string): CallerPerformance => {
       if (!callerMap.has(userId)) {
-        callerMap.set(userId, { userId, userName, callsMade: 0, emailsSent: 0, emailsOpened: 0, emailsClicked: 0, emailsBounced: 0, signups: 0, unreachableCount: 0, avgAttemptsPerLead: 0, callToEmailPct: 0, clickToSignupPct: 0 });
+        callerMap.set(userId, { userId, userName, callsMade: 0, emailsSent: 0, repliesSent: 0, emailsOpened: 0, emailsClicked: 0, emailsBounced: 0, signups: 0, unreachableCount: 0, avgAttemptsPerLead: 0, callToEmailPct: 0, clickToSignupPct: 0 });
       }
       return callerMap.get(userId)!;
     };
 
-    let totalCalls = 0, totalEmails = 0, totalSignups = 0;
+    let totalCalls = 0, totalEmails = 0, totalReplies = 0, totalSignups = 0;
     let totalOpened = 0, totalClicked = 0, totalBounced = 0;
 
     for (const row of callRows) {
@@ -787,6 +799,12 @@ export class DatabaseStorage implements IStorage {
       const c = Number(row.cnt);
       totalEmails += c;
       if (row.userId) getOrCreate(row.userId, row.userName || "Unknown").emailsSent = c;
+    }
+
+    for (const row of replyRows) {
+      const c = Number(row.cnt);
+      totalReplies += c;
+      if (row.userId) getOrCreate(row.userId, row.userName || "Unknown").repliesSent = c;
     }
 
     for (const row of eventRows) {
@@ -847,6 +865,7 @@ export class DatabaseStorage implements IStorage {
       totals: {
         calls: totalCalls,
         emails: totalEmails,
+        repliesSent: totalReplies,
         emailsOpened: totalOpened,
         emailsClicked: totalClicked,
         emailsBounced: totalBounced,
@@ -856,6 +875,7 @@ export class DatabaseStorage implements IStorage {
         callToEmailPct: totalCalls > 0 ? Math.round((totalEmails / totalCalls) * 1000) / 10 : 0,
         emailOpenPct: totalEmails > 0 ? Math.round((totalOpened / totalEmails) * 1000) / 10 : 0,
         emailClickPct: totalEmails > 0 ? Math.round((totalClicked / totalEmails) * 1000) / 10 : 0,
+        replyRatePct: totalEmails > 0 ? Math.round((totalReplies / totalEmails) * 1000) / 10 : 0,
         clickToSignupPct: totalClicked > 0 ? Math.round((totalSignups / totalClicked) * 1000) / 10 : 0,
         callToSignupPct: totalCalls > 0 ? Math.round((totalSignups / totalCalls) * 1000) / 10 : 0,
       },
