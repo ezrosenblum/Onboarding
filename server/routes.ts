@@ -236,6 +236,11 @@ export async function registerRoutes(
     });
   });
 
+  app.get("/api/leads/assigned-today", requireAdmin, async (req, res) => {
+    const result = await storage.getLeadsAssignedToday();
+    res.json(result);
+  });
+
   app.get("/api/leads/filtered", requireAdmin, async (req, res) => {
     const filters: any = {};
     if (req.query.state) filters.state = req.query.state as string;

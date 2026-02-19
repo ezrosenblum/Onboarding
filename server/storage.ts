@@ -117,6 +117,7 @@ export interface IStorage {
   deleteLead(id: number): Promise<void>;
   bulkDeleteLeads(ids: number[]): Promise<number>;
   getFilteredLeads(filters: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean; unassigned?: boolean }, limit?: number): Promise<Lead[]>;
+  getLeadsAssignedToday(): Promise<Lead[]>;
 
   getCallLogByTwilioSid(sid: string): Promise<CallLog | undefined>;
   updateCallLog(id: number, data: Partial<CallLog>): Promise<CallLog | undefined>;
@@ -965,6 +966,17 @@ export class DatabaseStorage implements IStorage {
     let query = db.select().from(leads).where(and(...conditions)).orderBy(leads.id);
     if (limit && limit > 0) return (query as any).limit(limit);
     return query;
+  }
+
+  async getLeadsAssignedToday(): Promise<Lead[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return db.select().from(leads)
+      .where(and(
+        sql`${leads.assignedAt} >= ${today}`,
+        sql`${leads.assignedToUserId} IS NOT NULL`
+      ))
+      .orderBy(leads.assignedToUserId, leads.id);
   }
 
   async getCallLogByTwilioSid(sid: string): Promise<CallLog | undefined> {
