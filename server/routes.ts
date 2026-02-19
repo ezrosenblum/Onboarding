@@ -378,14 +378,17 @@ export async function registerRoutes(
 
         for (const [spreadsheetCol, dbField] of Object.entries(mapping)) {
           const val = row[spreadsheetCol];
-          if (val !== undefined && val !== "") {
-            if (dbField === "reviewsCount") {
-              leadData[dbField] = parseInt(String(val)) || 0;
-            } else if (dbField === "rating") {
-              leadData[dbField] = String(val);
-            } else {
-              leadData[dbField] = String(val);
+          const strVal = String(val ?? "").trim();
+          if (strVal === "") continue;
+          if (dbField === "reviewsCount") {
+            leadData[dbField] = parseInt(strVal) || 0;
+          } else if (dbField === "rating") {
+            const parsed = parseFloat(strVal);
+            if (!isNaN(parsed)) {
+              leadData[dbField] = String(parsed);
             }
+          } else {
+            leadData[dbField] = strVal;
           }
         }
 
