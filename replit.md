@@ -35,8 +35,12 @@ The application features a modern full-stack architecture. The **frontend** is b
     *   **Caller Self-Pull:** Callers can pull unassigned leads based on filters.
 
 3.  **Email System:**
-    *   **Outbound Emails:** SendGrid integration for sending various templated emails (Send Info, Follow Up, Unreachable Outreach).
-    *   **Gating Rules:** Emails can only be sent if specific conditions are met (e.g., call log exists, lead is not unreachable).
+    *   **Outbound Emails:** SendGrid integration for sending various templated emails (Send Info, Follow Up, Unreachable Outreach). Reply-To headers use `lead_<token>@reply.supplystreamline.com` for automatic inbound routing.
+    *   **Inbound Email Capture:** SendGrid Inbound Parse webhook (`POST /api/sendgrid/inbound`) receives replies, extracts lead token from Reply-To address, stores in `inbound_emails` table with HTML sanitization (script/event handler removal).
+    *   **Email Threading:** Merged chronological view of sent and received emails per lead. Global Email Inbox page with Unread/All/Assigned to Me filters and click-through to lead threads.
+    *   **Controlled Replies:** Callers can reply to leads from the app via a simple reply UI (no free-text email composition). Replies are gated by suppression status.
+    *   **Gating Rules:** Emails require call log + confirmed email + contact name + not unreachable + not suppressed. Contact name collected during call wrap-up for SPOKE_SEND_INFO outcomes.
+    *   **Email Suppression:** Bounce and spam report events mark `emailSuppressed: true` on leads, blocking all future email sends and replies.
     *   **Email Tracking:** SendGrid webhooks process open, click, bounce, and dropped events, updating email status per lead.
     *   **Template Management:** Admin users can manage email templates via a dedicated interface, supporting variable substitution and defaulting.
 
@@ -69,7 +73,7 @@ The application features a modern full-stack architecture. The **frontend** is b
 
 7.  **Database & Schema:**
     *   PostgreSQL database managed with Drizzle ORM.
-    *   Schema defines tables for users, leads, call logs, notes, email logs, email events, email templates, AI prompts, AI research, signup events, and system settings.
+    *   Schema defines tables for users, leads, call logs, notes, email logs, email events, email templates, AI prompts, AI research, signup events, inbound emails, and system settings.
     *   Unique indexing ensures data integrity, especially for leads.
 
 ## External Dependencies

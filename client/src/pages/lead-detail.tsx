@@ -37,6 +37,19 @@ interface EmailEligibility {
   unreachableOutreach: { eligible: boolean; reasons: string[] };
 }
 
+interface InboundEmail {
+  id: number;
+  leadId: number;
+  fromEmail: string;
+  fromName: string | null;
+  toEmail: string;
+  subject: string;
+  bodyText: string | null;
+  bodyHtml: string | null;
+  isRead: boolean;
+  receivedAt: string;
+}
+
 interface AiResearchResponse {
   exists: boolean;
   current: AiResearchRecord | null;
@@ -57,6 +70,10 @@ export default function LeadDetailPage() {
   const { data: notes } = useQuery<LeadNote[]>({ queryKey: ["/api/leads", leadId, "notes"], enabled: !!leadId });
   const { data: emailLogs } = useQuery<EmailLog[]>({ queryKey: ["/api/leads", leadId, "emails"], enabled: !!leadId });
   const { data: eligibility } = useQuery<EmailEligibility>({ queryKey: ["/api/leads", leadId, "email-eligibility"], enabled: !!leadId });
+  const { data: emailThread } = useQuery<{ sent: EmailLog[]; received: InboundEmail[] }>({
+    queryKey: ["/api/leads", leadId, "email-thread"],
+    enabled: !!leadId,
+  });
   const { data: aiResearch, isLoading: aiLoading } = useQuery<AiResearchResponse>({ queryKey: ["/api/leads", leadId, "ai-research"], enabled: !!leadId });
 
   const [editPhone, setEditPhone] = useState("");
@@ -68,6 +85,7 @@ export default function LeadDetailPage() {
   const [callNotes, setCallNotes] = useState("");
   const [callDuration, setCallDuration] = useState("");
   const [aiDetailTab, setAiDetailTab] = useState("opener");
+  const [replyMessage, setReplyMessage] = useState("");
 
   useEffect(() => {
     if (lead) {
@@ -139,6 +157,22 @@ export default function LeadDetailPage() {
     },
     onError: (err: any) => {
       toast({ title: "Email failed to send", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const replyMutation = useMutation({
+    mutationFn: async (message: string) => {
+      await apiRequest("POST", `/api/leads/${leadId}/email/reply`, { message });
+    },
+    onSuccess: () => {
+      toast({ title: "Reply sent" });
+      setReplyMessage("");
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId, "email-thread"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leads", leadId, "emails"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/emails/inbox"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to send reply", description: err.message, variant: "destructive" });
     },
   });
 
@@ -455,69 +489,101 @@ export default function LeadDetailPage() {
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <EmailButton
-                    label="Send Info"
-                    eligible={eligibility?.sendInfo.eligible ?? false}
-                    reasons={eligibility?.sendInfo.reasons ?? []}
-                    isPending={sendEmailMutation.isPending}
-                    onClick={() => sendEmailMutation.mutate("SEND_INFO")}
-                    testId="button-email-send-info"
-                  />
-                  <EmailButton
-                    label="Follow Up"
-                    eligible={eligibility?.followUp.eligible ?? false}
-                    reasons={eligibility?.followUp.reasons ?? []}
-                    isPending={sendEmailMutation.isPending}
-                    onClick={() => sendEmailMutation.mutate("FOLLOW_UP")}
-                    testId="button-email-follow-up"
-                  />
-                  <EmailButton
-                    label="Unreachable Outreach"
-                    eligible={eligibility?.unreachableOutreach.eligible ?? false}
-                    reasons={eligibility?.unreachableOutreach.reasons ?? []}
-                    isPending={sendEmailMutation.isPending}
-                    onClick={() => sendEmailMutation.mutate("UNREACHABLE_OUTREACH")}
-                    testId="button-email-unreachable"
-                  />
+                  <EmailButton label="Send Info" eligible={eligibility?.sendInfo.eligible ?? false} reasons={eligibility?.sendInfo.reasons ?? []} isPending={sendEmailMutation.isPending} onClick={() => sendEmailMutation.mutate("SEND_INFO")} testId="button-email-send-info" />
+                  <EmailButton label="Follow Up" eligible={eligibility?.followUp.eligible ?? false} reasons={eligibility?.followUp.reasons ?? []} isPending={sendEmailMutation.isPending} onClick={() => sendEmailMutation.mutate("FOLLOW_UP")} testId="button-email-follow-up" />
+                  <EmailButton label="Unreachable Outreach" eligible={eligibility?.unreachableOutreach.eligible ?? false} reasons={eligibility?.unreachableOutreach.reasons ?? []} isPending={sendEmailMutation.isPending} onClick={() => sendEmailMutation.mutate("UNREACHABLE_OUTREACH")} testId="button-email-unreachable" />
                 </div>
               </CardContent>
             </Card>
           )}
 
-          {(emailLogs ?? []).length === 0 ? (
+          <Card>
+            <CardHeader className="pb-3">
+              <h3 className="font-semibold flex items-center gap-2"><Mail className="h-4 w-4" /> Email Thread</h3>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const sent = (emailThread?.sent ?? []).map(e => ({ type: 'sent' as const, id: `sent-${e.id}`, date: new Date(e.createdAt), subject: e.subject, from: 'You', to: e.toEmail, bodyHtml: e.bodyHtml, templateType: e.templateType, status: e.status, isReply: (e as any).isReply }));
+                const received = (emailThread?.received ?? []).map(e => ({ type: 'received' as const, id: `recv-${e.id}`, date: new Date(e.receivedAt), subject: e.subject, from: e.fromName || e.fromEmail, to: e.toEmail, bodyHtml: e.bodyHtml, bodyText: e.bodyText, isRead: e.isRead, inboundId: e.id }));
+                const all = [...sent, ...received].sort((a, b) => a.date.getTime() - b.date.getTime());
+                
+                if (all.length === 0) {
+                  return (
+                    <div className="text-center py-6">
+                      <Mail className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
+                      <p className="text-sm text-muted-foreground">No emails yet</p>
+                    </div>
+                  );
+                }
+                
+                return (
+                  <div className="space-y-3">
+                    {all.map((msg) => (
+                      <div key={msg.id} className={`p-3 rounded-md border ${msg.type === 'received' ? 'bg-muted/30' : ''}`} data-testid={`thread-msg-${msg.id}`}>
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <Badge variant={msg.type === 'sent' ? 'secondary' : 'default'} className="text-xs">
+                            {msg.type === 'sent' ? (msg.isReply ? 'You (Reply)' : msg.templateType?.replace(/_/g, ' ')) : 'Lead Reply'}
+                          </Badge>
+                          {msg.type === 'sent' && msg.status && (
+                            <Badge variant={msg.status === 'FAILED' ? 'destructive' : 'outline'} className="text-xs">{msg.status}</Badge>
+                          )}
+                          {msg.type === 'received' && !msg.isRead && (
+                            <Badge variant="default" className="text-xs">New</Badge>
+                          )}
+                        </div>
+                        <p className="text-sm font-medium">{msg.subject}</p>
+                        <p className="text-xs text-muted-foreground">
+                          From: {msg.from} &middot; {format(msg.date, "MMM d, yyyy h:mm a")}
+                        </p>
+                        {msg.type === 'received' && (msg.bodyHtml || msg.bodyText) && (
+                          msg.bodyHtml ? (
+                            <div className="mt-2 text-sm bg-background rounded p-2 border prose prose-sm max-w-none dark:prose-invert" dangerouslySetInnerHTML={{ __html: msg.bodyHtml }} />
+                          ) : (
+                            <div className="mt-2 text-sm bg-background rounded p-2 border whitespace-pre-wrap">{msg.bodyText}</div>
+                          )
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+
+          {canEdit && lead && (lead.confirmedEmail || lead.scrapedEmail) && (emailThread?.sent?.length || emailThread?.received?.length) ? (
+            lead.emailSuppressed ? (
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-sm text-muted-foreground" data-testid="text-reply-suppressed">
+                    Replies disabled — email is suppressed{lead.emailInvalidReason ? ` (${lead.emailInvalidReason})` : ""}.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
             <Card>
-              <CardContent className="p-6 text-center">
-                <Mail className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-muted-foreground">No emails sent yet</p>
+              <CardHeader className="pb-3">
+                <h3 className="font-semibold flex items-center gap-2"><Send className="h-4 w-4" /> Reply</h3>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Textarea
+                  value={replyMessage}
+                  onChange={(e) => setReplyMessage(e.target.value)}
+                  placeholder="Type your reply..."
+                  rows={3}
+                  data-testid="input-email-reply"
+                />
+                <Button
+                  onClick={() => replyMutation.mutate(replyMessage)}
+                  disabled={!replyMessage.trim() || replyMutation.isPending}
+                  data-testid="button-send-reply"
+                >
+                  {replyMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Send Reply
+                </Button>
               </CardContent>
             </Card>
-          ) : (
-            <div className="space-y-3">
-              {(emailLogs ?? []).map((email) => (
-                <Card key={email.id} data-testid={`card-email-${email.id}`}>
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-3 flex-wrap">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted">
-                        <Send className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge variant="outline" className="text-xs">{email.templateType.replace(/_/g, " ")}</Badge>
-                          <Badge variant={email.status === "FAILED" ? "destructive" : "secondary"} className="text-xs">
-                            {email.status}
-                          </Badge>
-                        </div>
-                        <p className="text-sm mt-1 truncate">{email.subject}</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          To: {email.toEmail} &middot; {format(new Date(email.createdAt), "MMM d, yyyy h:mm a")}
-                        </p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+            ))
+          : null}
         </TabsContent>
 
         <TabsContent value="notes" className="space-y-4 mt-4">

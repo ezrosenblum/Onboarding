@@ -23,6 +23,7 @@ import PerformanceDashboardPage from "@/pages/admin/performance-dashboard";
 import CallerDetailPage from "@/pages/admin/caller-detail";
 import SettingsHubPage from "@/pages/admin/settings-hub";
 import CallReviewPage from "@/pages/admin/call-review";
+import EmailInboxPage from "@/pages/email-inbox";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
@@ -48,6 +49,7 @@ function AppRouter() {
       <Route path="/my-leads" component={MyLeadsPage} />
       <Route path="/leads" component={AllLeadsPage} />
       <Route path="/leads/:id" component={LeadDetailPage} />
+      <Route path="/inbox" component={EmailInboxPage} />
       <Route path="/admin/upload">{() => <AdminRoute component={UploadLeadsPage} />}</Route>
       <Route path="/admin/assign">{() => <AdminRoute component={AssignBatchPage} />}</Route>
       <Route path="/admin/users">{() => <AdminRoute component={ManageUsersPage} />}</Route>

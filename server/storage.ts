@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { eq, and, isNull, ilike, sql, desc, asc, lte, gte, count } from "drizzle-orm";
-import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearch, signupEvents, systemSettings, callEvents } from "@shared/schema";
+import { users, leads, callLogs, leadNotes, emailLogs, emailEvents, emailTemplates, aiPrompts, aiResearch, signupEvents, systemSettings, callEvents, inboundEmails } from "@shared/schema";
 import type { User, InsertLead, Lead, CallLog, InsertCallLog, LeadNote, InsertLeadNote, EmailLog, InsertEmailLog, EmailEvent, InsertEmailEvent, EmailTemplate, InsertEmailTemplate, AiPrompt, AiResearchRecord, AiOutputJson, SignupEvent, SystemSetting, CallEvent } from "@shared/schema";
 import bcrypt from "bcryptjs";
 
@@ -137,6 +137,12 @@ export interface IStorage {
     byRatingBand: { band: string; calls: number; signups: number; conversionPct: number }[];
     bySourceFile: { sourceFile: string; totalLeads: number; calls: number; signups: number; conversionPct: number }[];
   }>;
+
+  createInboundEmail(data: any): Promise<any>;
+  getInboundEmailsByLeadId(leadId: number): Promise<any[]>;
+  markInboundEmailRead(id: number, userId: number): Promise<void>;
+  getEmailThread(leadId: number): Promise<{ sent: any[]; received: any[] }>;
+  getEmailThreads(opts: { filter: string; currentUserId: number; leadId?: number; assignedCallerId?: number }): Promise<any[]>;
 
   getAllSettings(): Promise<Record<string, string>>;
   getPipelineHealth(): Promise<{
@@ -1515,6 +1521,84 @@ export class DatabaseStorage implements IStorage {
     })).sort((a, b) => b.totalLeads - a.totalLeads);
 
     return { byState, byCategory, byRatingBand, bySourceFile };
+  }
+
+  async createInboundEmail(data: any): Promise<any> {
+    const [result] = await db.insert(inboundEmails).values(data).returning();
+    return result;
+  }
+
+  async getInboundEmailsByLeadId(leadId: number): Promise<any[]> {
+    return db.select().from(inboundEmails).where(eq(inboundEmails.leadId, leadId)).orderBy(desc(inboundEmails.receivedAt));
+  }
+
+  async markInboundEmailRead(id: number, userId: number): Promise<void> {
+    await db.update(inboundEmails).set({ isRead: true, readByUserId: userId, readAt: new Date() }).where(eq(inboundEmails.id, id));
+  }
+
+  async getEmailThread(leadId: number): Promise<{ sent: any[]; received: any[] }> {
+    const sent = await db.select().from(emailLogs).where(eq(emailLogs.leadId, leadId)).orderBy(asc(emailLogs.createdAt));
+    const received = await db.select().from(inboundEmails).where(eq(inboundEmails.leadId, leadId)).orderBy(asc(inboundEmails.receivedAt));
+    return { sent, received };
+  }
+
+  async getEmailThreads(opts: { filter: string; currentUserId: number; leadId?: number; assignedCallerId?: number }): Promise<any[]> {
+    const conditions: any[] = [];
+
+    if (opts.leadId) {
+      conditions.push(eq(leads.id, opts.leadId));
+    }
+    if (opts.filter === "mine" || opts.assignedCallerId) {
+      conditions.push(eq(leads.assignedToUserId, opts.assignedCallerId || opts.currentUserId));
+    }
+
+    conditions.push(sql`(EXISTS (SELECT 1 FROM email_logs el WHERE el.lead_id = ${leads.id}) OR EXISTS (SELECT 1 FROM inbound_emails ie WHERE ie.lead_id = ${leads.id}))`);
+
+    if (opts.filter === "unread") {
+      conditions.push(sql`EXISTS (SELECT 1 FROM inbound_emails ie WHERE ie.lead_id = ${leads.id} AND ie.is_read = false)`);
+    }
+
+    const rows = await db.select({
+      leadId: leads.id,
+      companyName: leads.companyName,
+      confirmedEmail: leads.confirmedEmail,
+      contactName: leads.contactName,
+      assignedToUserId: leads.assignedToUserId,
+      statusEmail: leads.statusEmail,
+    })
+    .from(leads)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(leads.id))
+    .limit(100);
+
+    const enriched = await Promise.all(rows.map(async (row) => {
+      const [unread] = await db.select({ count: sql<number>`count(*)` }).from(inboundEmails).where(and(eq(inboundEmails.leadId, row.leadId), eq(inboundEmails.isRead, false)));
+      const [sentCount] = await db.select({ count: sql<number>`count(*)` }).from(emailLogs).where(eq(emailLogs.leadId, row.leadId));
+      const [receivedCount] = await db.select({ count: sql<number>`count(*)` }).from(inboundEmails).where(eq(inboundEmails.leadId, row.leadId));
+      const lastSent = await db.select({ subject: emailLogs.subject, createdAt: emailLogs.createdAt }).from(emailLogs).where(eq(emailLogs.leadId, row.leadId)).orderBy(desc(emailLogs.createdAt)).limit(1);
+      const lastReceived = await db.select({ receivedAt: inboundEmails.receivedAt }).from(inboundEmails).where(eq(inboundEmails.leadId, row.leadId)).orderBy(desc(inboundEmails.receivedAt)).limit(1);
+
+      const lastActivity = lastReceived[0]?.receivedAt && lastSent[0]?.createdAt
+        ? (lastReceived[0].receivedAt > lastSent[0].createdAt ? lastReceived[0].receivedAt : lastSent[0].createdAt)
+        : lastReceived[0]?.receivedAt || lastSent[0]?.createdAt || null;
+
+      return {
+        ...row,
+        unreadCount: Number(unread?.count || 0),
+        sentCount: Number(sentCount?.count || 0),
+        receivedCount: Number(receivedCount?.count || 0),
+        lastSubject: lastSent[0]?.subject || null,
+        lastActivity,
+      };
+    }));
+
+    enriched.sort((a, b) => {
+      if (!a.lastActivity) return 1;
+      if (!b.lastActivity) return -1;
+      return new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime();
+    });
+
+    return enriched;
   }
 }
 

@@ -6,11 +6,11 @@ import * as XLSX from "xlsx";
 import { storage } from "./storage";
 import { db } from "./db";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
-import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, emailTemplateTypeEnum, callLogs, leads } from "@shared/schema";
+import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, emailTemplateTypeEnum, callLogs, leads, inboundEmails } from "@shared/schema";
 import type { InsertLead, CallOutcome, EmailTemplateType } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { buildEmailContent, sendEmail, getDefaultTemplates } from "./email-service";
+import { buildEmailContent, sendEmail, getDefaultTemplates, extractLeadTokenFromReplyTo, buildReplyToAddress } from "./email-service";
 import { generateStructuredResearch, getDefaultAiPrompt, isAiConfigured, buildFinalPrompt } from "./services/aiProvider";
 import {
   isTwilioConfigured,
@@ -454,24 +454,31 @@ export async function registerRoutes(
     const callLogs = await storage.getCallLogsByLeadId(leadId);
     const hasCallLog = callLogs.length > 0;
     const hasConfirmedEmail = !!lead.confirmedEmail?.trim();
+    const hasContactName = !!lead.contactName?.trim();
     const hasAnyEmail = hasConfirmedEmail || !!lead.scrapedEmail?.trim();
     const hasSendInfoEmail = await storage.hasEmailLogForLead(leadId, "SEND_INFO");
     const maxRetryStr = await storage.getSetting("max_retry_attempts");
     const maxRetry = parseInt(maxRetryStr || "3");
     const maxedRetries = lead.attemptCount >= maxRetry;
+    const isSuppressed = !!lead.emailSuppressed;
+
+    const suppressionReasons = isSuppressed ? [`Email suppressed: ${lead.emailInvalidReason || "Unknown reason"}`] : [];
 
     res.json({
       sendInfo: {
-        eligible: hasCallLog && hasConfirmedEmail && !lead.unreachable,
+        eligible: hasCallLog && hasConfirmedEmail && hasContactName && !lead.unreachable && !isSuppressed,
         reasons: [
+          ...suppressionReasons,
           ...(!hasCallLog ? ["Log a call first"] : []),
           ...(!hasConfirmedEmail ? ["Add confirmed email first"] : []),
+          ...(!hasContactName ? ["Add contact name first"] : []),
           ...(lead.unreachable ? ["Lead is unreachable"] : []),
         ],
       },
       followUp: {
-        eligible: hasCallLog && hasConfirmedEmail && hasSendInfoEmail && !lead.unreachable,
+        eligible: hasCallLog && hasConfirmedEmail && hasSendInfoEmail && !lead.unreachable && !isSuppressed,
         reasons: [
+          ...suppressionReasons,
           ...(!hasCallLog ? ["Log a call first"] : []),
           ...(!hasConfirmedEmail ? ["Add confirmed email first"] : []),
           ...(!hasSendInfoEmail ? ["Send initial info email first"] : []),
@@ -479,8 +486,9 @@ export async function registerRoutes(
         ],
       },
       unreachableOutreach: {
-        eligible: (lead.unreachable || maxedRetries) && hasAnyEmail,
+        eligible: (lead.unreachable || maxedRetries) && hasAnyEmail && !isSuppressed,
         reasons: [
+          ...suppressionReasons,
           ...(!lead.unreachable && !maxedRetries ? ["Lead is not unreachable or max retries not reached"] : []),
           ...(!hasAnyEmail ? ["No email address available"] : []),
         ],
@@ -513,9 +521,14 @@ export async function registerRoutes(
     const maxRetryStr = await storage.getSetting("max_retry_attempts");
     const maxRetry = parseInt(maxRetryStr || "3");
 
+    if (lead.emailSuppressed) {
+      return res.status(400).json({ message: "Email sending is suppressed for this lead" });
+    }
+
     if (typedTemplate === "SEND_INFO") {
       if (!hasCallLog) return res.status(400).json({ message: "Log a call before sending info email" });
       if (!hasConfirmedEmail) return res.status(400).json({ message: "Confirmed email required" });
+      if (!lead.contactName?.trim()) return res.status(400).json({ message: "Contact name is required before sending email" });
       if (lead.unreachable) return res.status(400).json({ message: "Lead is unreachable" });
     } else if (typedTemplate === "FOLLOW_UP") {
       if (!hasCallLog) return res.status(400).json({ message: "Log a call before sending follow-up" });
@@ -607,7 +620,16 @@ export async function registerRoutes(
         } else if (eventType === "click") {
           await storage.updateLead(lead.id, { statusEmail: "CLICKED" });
         } else if (eventType === "bounce" || eventType === "dropped") {
-          await storage.updateLead(lead.id, { statusEmail: "BOUNCED" });
+          await storage.updateLead(lead.id, { 
+            statusEmail: "BOUNCED", 
+            emailSuppressed: true, 
+            emailInvalidReason: eventType === "bounce" ? "Email bounced" : "Email dropped" 
+          });
+        } else if (eventType === "spamreport") {
+          await storage.updateLead(lead.id, { 
+            emailSuppressed: true, 
+            emailInvalidReason: "Spam report received" 
+          });
         }
       } catch (err) {
         console.error("[WEBHOOK] Error processing event:", err);
@@ -1014,7 +1036,7 @@ export async function registerRoutes(
       const leadId = parseInt(req.params.id);
       const callLogId = parseInt(req.params.callLogId);
       const user = req.user as any;
-      const { outcome, notes, confirmedEmail, bestTimeToCall, withinBadTimingWindow } = req.body;
+      const { outcome, notes, confirmedEmail, contactName, bestTimeToCall, withinBadTimingWindow } = req.body;
 
       if (!outcome || !callOutcomeEnum.includes(outcome)) {
         return res.status(400).json({ message: "Valid outcome required" });
@@ -1035,6 +1057,7 @@ export async function registerRoutes(
       };
 
       if (confirmedEmail) leadUpdate.confirmedEmail = confirmedEmail;
+      if (contactName) leadUpdate.contactName = contactName;
       if (bestTimeToCall) leadUpdate.bestTimeToCall = bestTimeToCall;
 
       if (retryOutcomes.includes(outcome as CallOutcome)) {
@@ -1494,6 +1517,173 @@ export async function registerRoutes(
     }
     const analysis = await storage.getCategoryStateAnalysis(range as "week" | "month" | "all");
     res.json(analysis);
+  });
+
+  app.post("/api/sendgrid/inbound", async (req, res) => {
+    try {
+      const { to, from, subject, text, html, envelope } = req.body;
+      
+      let leadToken: string | null = null;
+      
+      if (to) {
+        const toAddresses = to.split(",").map((e: string) => e.trim());
+        for (const addr of toAddresses) {
+          const emailPart = addr.match(/<([^>]+)>/)?.[1] || addr;
+          leadToken = extractLeadTokenFromReplyTo(emailPart);
+          if (leadToken) break;
+        }
+      }
+      
+      if (!leadToken && envelope) {
+        try {
+          const env = typeof envelope === "string" ? JSON.parse(envelope) : envelope;
+          if (Array.isArray(env.to)) {
+            for (const addr of env.to) {
+              leadToken = extractLeadTokenFromReplyTo(addr);
+              if (leadToken) break;
+            }
+          }
+        } catch {}
+      }
+      
+      if (!leadToken) {
+        console.log("[INBOUND] Could not extract lead token from:", to);
+        return res.status(200).json({ ok: true, matched: false });
+      }
+      
+      const lead = await storage.getLeadByToken(leadToken);
+      if (!lead) {
+        console.log("[INBOUND] No lead found for token:", leadToken);
+        return res.status(200).json({ ok: true, matched: false });
+      }
+      
+      const fromEmail = from?.match(/<([^>]+)>/)?.[1] || from || "unknown";
+      const fromName = from?.match(/^([^<]+)/)?.[1]?.trim() || null;
+      
+      const sanitizedHtml = html ? html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/on\w+="[^"]*"/gi, "") : null;
+      
+      await storage.createInboundEmail({
+        leadId: lead.id,
+        fromEmail,
+        fromName,
+        toEmail: to || "",
+        subject: subject || "(No Subject)",
+        bodyText: text || null,
+        bodyHtml: sanitizedHtml,
+        isRead: false,
+        receivedAt: new Date(),
+      });
+      
+      if (lead.statusEmail !== "REPLIED") {
+        await storage.updateLead(lead.id, { statusEmail: "REPLIED" });
+      }
+      
+      console.log(`[INBOUND] Email from ${fromEmail} attached to lead ${lead.id} (${lead.companyName})`);
+      res.status(200).json({ ok: true, matched: true, leadId: lead.id });
+    } catch (err) {
+      console.error("[INBOUND] Error processing inbound email:", err);
+      res.status(200).json({ ok: true, error: "Processing error" });
+    }
+  });
+
+  app.post("/api/leads/:id/email/reply", requireAuth, async (req, res) => {
+    const leadId = parseInt(req.params.id);
+    const lead = await storage.getLeadById(leadId);
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+    
+    const isAdmin = req.user!.role === "admin";
+    const isAssigned = lead.assignedToUserId === req.user!.id;
+    if (!isAdmin && !isAssigned) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+    
+    if (lead.emailSuppressed) {
+      return res.status(400).json({ message: "Email sending is suppressed for this lead" });
+    }
+    
+    const { message } = req.body;
+    if (!message?.trim()) {
+      return res.status(400).json({ message: "Reply message is required" });
+    }
+    
+    const toEmail = lead.confirmedEmail?.trim() || lead.scrapedEmail?.trim();
+    if (!toEmail) {
+      return res.status(400).json({ message: "No email address available for this lead" });
+    }
+    
+    const emailLogsList = await storage.getEmailLogsByLeadId(leadId);
+    const lastSent = emailLogsList[0];
+    
+    const replySubject = lastSent ? `Re: ${lastSent.subject.replace(/^Re:\s*/i, "")}` : `Re: SupplyStreamline`;
+    const replyHtml = `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+<p>${message.trim().replace(/\n/g, "<br/>")}</p>
+<p>Best,<br/>${req.user!.name}</p>
+</div>`;
+    
+    const sendResult = await sendEmail(
+      toEmail, replySubject, replyHtml, lead.leadToken, lead.id,
+      { 
+        inReplyTo: lastSent?.sendgridMessageId || undefined,
+        bodyText: message.trim() 
+      }
+    );
+    
+    const emailLog = await storage.createEmailLog({
+      leadId: lead.id,
+      userId: req.user!.id,
+      templateType: "FOLLOW_UP" as any,
+      toEmail,
+      fromEmail: "connect@supplystreamline.com",
+      subject: replySubject,
+      bodyHtml: replyHtml,
+      bodyText: message.trim(),
+      sendgridMessageId: sendResult.messageId || null,
+      inReplyToMessageId: lastSent?.sendgridMessageId || null,
+      isReply: true,
+      status: sendResult.success ? (sendResult.mock ? "MOCK_SENT" : "SENT") : "FAILED",
+    });
+    
+    if (!sendResult.success) {
+      return res.status(500).json({ message: sendResult.error || "Failed to send reply", emailLog });
+    }
+    
+    res.status(201).json(emailLog);
+  });
+
+  app.get("/api/emails/inbox", requireAuth, async (req, res) => {
+    const filter = (req.query.filter as string) || "all";
+    const leadId = req.query.leadId ? parseInt(req.query.leadId as string) : undefined;
+    const userId = req.user!.role === "admin" ? (req.query.callerId ? parseInt(req.query.callerId as string) : undefined) : req.user!.id;
+    
+    const threads = await storage.getEmailThreads({
+      filter: filter as "all" | "unread" | "mine",
+      currentUserId: req.user!.id,
+      leadId,
+      assignedCallerId: filter === "mine" ? req.user!.id : userId,
+    });
+    
+    res.json(threads);
+  });
+
+  app.post("/api/emails/inbound/:id/read", requireAuth, async (req, res) => {
+    const inboundId = parseInt(req.params.id);
+    await storage.markInboundEmailRead(inboundId, req.user!.id);
+    res.json({ ok: true });
+  });
+
+  app.get("/api/leads/:id/email-thread", requireAuth, async (req, res) => {
+    const leadId = parseInt(req.params.id);
+    const lead = await storage.getLeadById(leadId);
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+    
+    const thread = await storage.getEmailThread(leadId);
+
+    const unreadReceived = (thread.received || []).filter((r: any) => !r.isRead);
+    for (const msg of unreadReceived) {
+      await storage.markInboundEmailRead(msg.id, req.user!.id);
+    }
+
+    res.json(thread);
   });
 
   return httpServer;

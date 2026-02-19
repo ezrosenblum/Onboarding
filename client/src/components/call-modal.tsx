@@ -161,6 +161,7 @@ export function CallModal({ lead, open, onClose }: CallModalProps) {
   const [outcome, setOutcome] = useState("");
   const [notes, setNotes] = useState("");
   const [confirmedEmail, setConfirmedEmail] = useState("");
+  const [contactName, setContactName] = useState("");
   const [bestTimeToCall, setBestTimeToCall] = useState("");
 
   const { data: lastCall } = useQuery<CallLog[]>({
@@ -192,6 +193,7 @@ export function CallModal({ lead, open, onClose }: CallModalProps) {
       setOutcome("");
       setNotes("");
       setConfirmedEmail(lead.confirmedEmail || "");
+      setContactName(lead.contactName || "");
       setBestTimeToCall(lead.bestTimeToCall || "");
       if (userAgentPhone?.agentPhone) {
         setAgentPhone(userAgentPhone.agentPhone);
@@ -339,6 +341,7 @@ export function CallModal({ lead, open, onClose }: CallModalProps) {
         outcome,
         notes: notes || null,
         confirmedEmail: confirmedEmail || null,
+        contactName: contactName || null,
         bestTimeToCall: bestTimeToCall || null,
         withinBadTimingWindow: opts.withinBadTimingWindow,
       });
@@ -638,6 +641,22 @@ export function CallModal({ lead, open, onClose }: CallModalProps) {
                   />
                 </div>
 
+                {(outcome === "SPOKE_SEND_INFO" || outcome === "SPOKE_FOLLOW_UP" || outcome === "SPOKE_INTERESTED") && (
+                  <div>
+                    <Label htmlFor="wrap-contact-name">Contact Name (person spoken to)</Label>
+                    <Input
+                      id="wrap-contact-name"
+                      value={contactName}
+                      onChange={(e) => setContactName(e.target.value)}
+                      placeholder="e.g., John, Front Desk, Owner"
+                      data-testid="input-contact-name"
+                    />
+                    {outcome === "SPOKE_SEND_INFO" && !contactName.trim() && (
+                      <p className="text-xs text-destructive mt-1">Required before sending email</p>
+                    )}
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label htmlFor="wrap-email">Confirmed Email</Label>
@@ -648,6 +667,9 @@ export function CallModal({ lead, open, onClose }: CallModalProps) {
                       placeholder="email@example.com"
                       data-testid="input-confirmed-email"
                     />
+                    {outcome === "SPOKE_SEND_INFO" && !confirmedEmail.trim() && (
+                      <p className="text-xs text-destructive mt-1">Required before sending email</p>
+                    )}
                   </div>
                   <div>
                     <Label htmlFor="wrap-time">Best Time to Call</Label>

@@ -59,8 +59,8 @@ export function getDefaultTemplates(): Record<EmailTemplateType, DefaultTemplate
     SEND_INFO: {
       subject: "SupplyStreamline – Getting You Connected",
       bodyHtml: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-<p>Hi {{company_name}} team,</p>
-<p>It was a pleasure speaking with you! As mentioned, <strong>SupplyStreamline</strong> connects vendors with vetted buyers looking for exactly what you offer.</p>
+<p>Hi {{contact_name}},</p>
+<p>It was a pleasure speaking with you earlier regarding {{company_name}}. As mentioned, <strong>SupplyStreamline</strong> connects vendors with vetted buyers looking for exactly what you offer.</p>
 <p>Here's a quick summary of how we help:</p>
 <ul>
 <li>Direct access to active buyers in your space</li>
@@ -75,7 +75,7 @@ export function getDefaultTemplates(): Record<EmailTemplateType, DefaultTemplate
     FOLLOW_UP: {
       subject: "Quick follow-up – SupplyStreamline",
       bodyHtml: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-<p>Hi {{company_name}} team,</p>
+<p>Hi {{contact_name}},</p>
 <p>Just wanted to follow up on our previous email. We'd love to get you set up – it only takes a few minutes and there's no cost to you.</p>
 <p><a href="{{signup_link}}" style="display: inline-block; background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">Complete Signup</a></p>
 <p style="color: #666; font-size: 13px; margin-top: 24px;">Feel free to reply with any questions.</p>
@@ -85,7 +85,7 @@ export function getDefaultTemplates(): Record<EmailTemplateType, DefaultTemplate
     UNREACHABLE_OUTREACH: {
       subject: "We tried reaching you – SupplyStreamline",
       bodyHtml: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-<p>Hi {{company_name}} team,</p>
+<p>Hi {{contact_name}},</p>
 <p>We've been trying to reach you by phone but haven't been able to connect. No worries – we know you're busy!</p>
 <p><strong>SupplyStreamline</strong> helps vendors like you connect directly with qualified buyers. It's free to sign up and takes less than 5 minutes.</p>
 <p><a href="{{signup_link}}" style="display: inline-block; background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">Sign Up – It's Free</a></p>
@@ -96,10 +96,22 @@ export function getDefaultTemplates(): Record<EmailTemplateType, DefaultTemplate
   };
 }
 
+const REPLY_DOMAIN = "reply.supplystreamline.com";
+
+export function buildReplyToAddress(leadToken: string): string {
+  return `lead_${leadToken}@${REPLY_DOMAIN}`;
+}
+
+export function extractLeadTokenFromReplyTo(email: string): string | null {
+  const match = email.match(/^lead_([a-f0-9-]+)@/i);
+  return match ? match[1] : null;
+}
+
 function substituteVariables(text: string, lead: Lead, callerName?: string): string {
   const signupLink = buildSignupLink(lead.leadToken);
   return text
     .replace(/\{\{company_name\}\}/g, lead.companyName || "")
+    .replace(/\{\{contact_name\}\}/g, lead.contactName || lead.companyName || "")
     .replace(/\{\{contact_email\}\}/g, lead.confirmedEmail || lead.scrapedEmail || "")
     .replace(/\{\{caller_name\}\}/g, callerName || "The SupplyStreamline Team")
     .replace(/\{\{signup_link\}\}/g, signupLink)
@@ -142,8 +154,10 @@ export async function sendEmail(
   bodyHtml: string,
   leadToken: string,
   leadId: number,
+  options?: { inReplyTo?: string; bodyText?: string },
 ): Promise<SendResult> {
   const credentials = await getCredentials();
+  const replyTo = buildReplyToAddress(leadToken);
 
   if (!credentials) {
     console.log("[EMAIL] Mock mode: SendGrid not configured, logging email without sending");
@@ -152,16 +166,27 @@ export async function sendEmail(
 
   try {
     sgMail.setApiKey(credentials.apiKey);
-    const [response] = await sgMail.send({
+    const msg: any = {
       to: toEmail,
       from: credentials.fromEmail || FROM_EMAIL,
+      replyTo: replyTo,
       subject,
       html: bodyHtml,
       customArgs: {
         lead_token: leadToken,
         lead_id: String(leadId),
       },
-    });
+    };
+    if (options?.bodyText) {
+      msg.text = options.bodyText;
+    }
+    if (options?.inReplyTo) {
+      msg.headers = {
+        "In-Reply-To": options.inReplyTo,
+        "References": options.inReplyTo,
+      };
+    }
+    const [response] = await sgMail.send(msg);
 
     const messageId = response?.headers?.["x-message-id"] || null;
     return { success: true, messageId: messageId || undefined };

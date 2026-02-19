@@ -32,7 +32,7 @@ export const retryOutcomes: readonly CallOutcome[] = ["NO_ANSWER", "VOICEMAIL", 
 export const callStatusEnum = ["NOT_CALLED", ...callOutcomeEnum] as const;
 export type CallStatus = (typeof callStatusEnum)[number];
 
-export const emailStatusEnum = ["NOT_SENT", "SENT", "OPENED", "CLICKED", "BOUNCED", "REPLIED"] as const;
+export const emailStatusEnum = ["NOT_SENT", "SENT", "OPENED", "CLICKED", "BOUNCED", "REPLIED", "SUPPRESSED"] as const;
 export type EmailStatus = (typeof emailStatusEnum)[number];
 
 export const emailTemplateTypeEnum = ["SEND_INFO", "FOLLOW_UP", "UNREACHABLE_OUTREACH"] as const;
@@ -78,6 +78,7 @@ export const leads = pgTable("leads", {
   phone: text("phone"),
   scrapedEmail: text("scraped_email"),
   confirmedEmail: text("confirmed_email"),
+  contactName: text("contact_name"),
   website: text("website"),
   domain: text("domain"),
   categoryKeyword: text("category_keyword"),
@@ -95,6 +96,8 @@ export const leads = pgTable("leads", {
   leadToken: text("lead_token").notNull().unique().default(sql`gen_random_uuid()`),
   emailLastSentAt: timestamp("email_last_sent_at"),
   emailSentCount: integer("email_sent_count").notNull().default(0),
+  emailSuppressed: boolean("email_suppressed").notNull().default(false),
+  emailInvalidReason: text("email_invalid_reason"),
   signedUpAt: timestamp("signed_up_at"),
   signedUpEmail: text("signed_up_email"),
   signedUpUserId: text("signed_up_user_id"),
@@ -162,10 +165,34 @@ export const emailLogs = pgTable("email_logs", {
   fromEmail: text("from_email").notNull().default("connect@supplystreamline.com"),
   subject: text("subject").notNull(),
   bodyHtml: text("body_html").notNull(),
+  bodyText: text("body_text"),
   sendgridMessageId: text("sendgrid_message_id"),
+  inReplyToMessageId: text("in_reply_to_message_id"),
+  isReply: boolean("is_reply").notNull().default(false),
   status: text("status").notNull().default("SENT"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const inboundEmails = pgTable("inbound_emails", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull().references(() => leads.id),
+  fromEmail: text("from_email").notNull(),
+  fromName: text("from_name"),
+  toEmail: text("to_email").notNull(),
+  subject: text("subject").notNull(),
+  bodyText: text("body_text"),
+  bodyHtml: text("body_html"),
+  sgMessageId: text("sg_message_id"),
+  inReplyTo: text("in_reply_to"),
+  isRead: boolean("is_read").notNull().default(false),
+  readByUserId: integer("read_by_user_id").references(() => users.id),
+  readAt: timestamp("read_at"),
+  receivedAt: timestamp("received_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("inbound_emails_lead_id_idx").on(table.leadId),
+  index("inbound_emails_received_at_idx").on(table.receivedAt),
+]);
 
 export const emailEvents = pgTable("email_events", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -288,6 +315,10 @@ export type AiPrompt = typeof aiPrompts.$inferSelect;
 export const insertAiResearchSchema = createInsertSchema(aiResearch).omit({ id: true, createdAt: true });
 export type InsertAiResearch = z.infer<typeof insertAiResearchSchema>;
 export type AiResearchRecord = typeof aiResearch.$inferSelect;
+
+export const insertInboundEmailSchema = createInsertSchema(inboundEmails).omit({ id: true, createdAt: true });
+export type InsertInboundEmail = z.infer<typeof insertInboundEmailSchema>;
+export type InboundEmail = typeof inboundEmails.$inferSelect;
 
 export type SignupEvent = typeof signupEvents.$inferSelect;
 

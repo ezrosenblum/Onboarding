@@ -1,4 +1,4 @@
-import { Upload, Users, ClipboardList, LayoutDashboard, UserCheck, PhoneCall, List, Mail, Sparkles, BarChart3, Activity, Settings, Headphones } from "lucide-react";
+import { Upload, Users, ClipboardList, LayoutDashboard, UserCheck, PhoneCall, List, Mail, Inbox, Sparkles, BarChart3, Activity, Settings, Headphones } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
 import {
@@ -22,6 +22,7 @@ const adminItems = [
   { title: "Upload Leads", url: "/admin/upload", icon: Upload },
   { title: "Assign Batch", url: "/admin/assign", icon: UserCheck },
   { title: "All Vendor Leads", url: "/leads", icon: ClipboardList },
+  { title: "Email Inbox", url: "/inbox", icon: Inbox },
   { title: "Email Templates", url: "/admin/email-templates", icon: Mail },
   { title: "AI Prompts", url: "/admin/ai-prompts", icon: Sparkles },
   { title: "Performance", url: "/admin/dashboard", icon: Activity },
@@ -34,6 +35,7 @@ const adminItems = [
 const callerItems = [
   { title: "Today's Calls", url: "/", icon: PhoneCall },
   { title: "My Assigned", url: "/my-leads", icon: List },
+  { title: "Email Inbox", url: "/inbox", icon: Inbox },
   { title: "All Vendor Leads", url: "/leads", icon: ClipboardList },
 ];
 
