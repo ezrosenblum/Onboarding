@@ -1,0 +1,294 @@
+Stage 7 is: Admin Dashboard + Analytics + Quality Control + Hardening.
+
+It’s where you stop “running the machine manually” and start managing performance and outcomes.
+
+Stage 7 — Admin Ops Layer (Full Detail)
+Purpose
+
+Give admin a single place to:
+
+Monitor both callers
+
+Measure conversion
+
+Coach quality (via recordings/transcripts)
+
+Control operational settings
+
+Keep the pipeline healthy
+
+Prevent data drift and failures
+
+This stage does not change the core workflow— it makes it manageable at scale.
+
+1) Admin Dashboard (Daily Command Center)
+1.1 “Today” KPI Strip (top row)
+
+Must show:
+
+Calls placed today (total + per caller)
+
+Emails sent today (total + per caller)
+
+Call → Email conversion % (per caller + total)
+
+Signups today (total + per caller attribution)
+
+Retry eligible today (pipeline health)
+
+Optional (nice):
+
+Avg calls/hour (per caller)
+
+Avg talk time (if real calling is implemented)
+
+1.2 Funnel Conversion Panel
+
+Show conversion rates across chosen time range (today / last 7 days / last 30 days):
+
+Calls → Send Info email %
+
+Email Sent → Open %
+
+Open → Click %
+
+Click → Signup %
+
+Calls → Signup %
+
+Important: filters by pipeline (vendor/buyer) and by caller.
+
+1.3 Caller Comparison (Admin-only toggle)
+
+You decided:
+
+Callers see only their own metrics
+
+Admin can optionally enable a leaderboard
+
+So:
+
+Admin dashboard includes “Comparison view” (side-by-side)
+
+Toggle to show/hide leaderboard (admin setting)
+
+2) Performance Drilldown
+2.1 Caller Detail Page
+
+Per caller, show:
+
+Calls/day trend
+
+Emails/day trend
+
+Signups/day trend
+
+Call → Email %
+
+Click → Signup %
+
+Unreachable rate
+
+Outcome distribution (pie/table)
+
+2.2 Outcome Distribution (must)
+
+For a time range:
+
+% No answer
+
+% Voicemail
+
+% Gatekeeper
+
+% Send info
+
+% Interested
+
+% Not interested
+
+This tells you if scripts are working.
+
+3) Time-Based Intelligence (the “bad timing” analytics)
+
+You wanted to track:
+
+“Bad timing” calls (within 15 min of open/close)
+
+Whether those produce more no-answer outcomes
+
+Stage 7 adds reporting:
+
+No-answer rate during bad timing vs normal time
+
+Conversion rates by hour of day
+
+Best times to call by category/state (optional later)
+
+This uses:
+
+within_bad_timing_window flag on call logs
+
+timestamps
+
+lead timezone / hours
+
+4) Quality Control Tools (Coaching)
+
+If calling/recording exists:
+
+4.1 Call Review Queue
+
+Admin can filter calls by:
+
+Caller
+
+Outcome type
+
+Duration
+
+Date range
+
+“Spoke – Send Info” calls (review pitch quality)
+
+“Not Interested” calls (check if lost too early)
+
+Admin sees:
+
+Recording playback
+
+Transcript
+
+Notes
+
+4.2 Flagging / Coaching Notes
+
+Admin can:
+
+Add “coach note” to a call log
+
+Add “caller feedback” record visible to caller (optional)
+
+Tag calls as “Great / Needs improvement”
+
+5) Operational Settings Panel (Admin Control Center)
+
+A single admin settings screen for:
+
+5.1 Retry settings
+
+max_retry_attempts (default 3)
+
+retry_delay_business_days (default 2)
+
+5.2 Business hours warning
+
+warning window minutes (default 15)
+
+soft warn only (locked)
+
+5.3 Daily targets
+
+Set daily target per caller (KPI only)
+
+5.4 Email templates
+
+Already exists, but Stage 7 bundles it into a “Settings hub”
+
+5.5 AI prompt settings
+
+Vendor prompt
+
+Buyer prompt
+
+Regenerate behavior controls (optional)
+
+5.6 Webhook settings
+
+View webhook status logs
+
+See last 50 webhook calls (success/fail)
+
+6) Pipeline Health Monitoring
+
+Admin sees:
+
+Total leads remaining (uncontacted)
+
+Leads assigned but untouched > X days
+
+Retry queue size
+
+Unreachable count
+
+Active/Pending count (spoke but no email sent)
+
+Leads stuck in “Clicked but not signed up” > X days
+
+This is where admin detects leaks in the funnel.
+
+7) Exception & Alerts (optional but powerful)
+
+Admin gets alerts (inside dashboard, no email required):
+
+Caller has 0 calls logged by 11am
+
+High “No Answer” rate today (maybe wrong hours/region)
+
+High bounce rate (bad email collection)
+
+Webhook failures (signups not being recorded)
+
+8) Data Export (Admin)
+
+Exports as CSV:
+
+Leads (with statuses)
+
+Call logs
+
+Email logs/events
+
+Signups
+
+Useful for external analysis.
+
+9) Security + Hardening (must)
+9.1 Webhook verification status
+
+Ensure webhook secret in use
+
+Log every webhook payload
+
+Rate limit endpoint
+
+9.2 SendGrid webhook security
+
+Optional signature verification
+
+9.3 Role enforcement review
+
+Confirm no caller can access other caller’s data
+
+Admin audit log of changes (optional)
+
+Stage 7 Acceptance Criteria (must pass)
+
+Admin can see “today performance” clearly in 5 seconds
+
+Admin can drill down by caller and by pipeline
+
+Admin can review recordings/transcripts (if calling exists)
+
+Admin can identify funnel leaks: called but no email, clicked but no signup
+
+Admin can adjust key operational settings without code edits
+
+Exports work
+
+One question (to lock Stage 7 correctly)
+
+Do you want Stage 7 to start with:
+A) Dashboard + KPIs only (fast, immediate value)
+or
+B) Dashboard + KPIs + Settings Hub + Drilldowns (bigger, but complete ops layer)?

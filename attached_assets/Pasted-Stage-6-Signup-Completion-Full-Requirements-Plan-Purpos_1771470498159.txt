@@ -1,0 +1,331 @@
+Stage 6 — Signup Completion (Full Requirements + Plan)
+Purpose
+
+Close the loop so the onboarding engine can automatically mark a lead COMPLETED when they truly sign up (account created and email confirmed), enabling real funnel metrics:
+
+Call → Email → Open → Click → Signup (Completed)
+
+1) Definition of “Completed” (Non-negotiable)
+
+A lead is COMPLETED only when:
+
+The user created an account on SupplyStreamline and
+
+The user confirmed their email (clicked confirmation link)
+
+Not completed when:
+
+They just clicked the signup link
+
+They started filling a form
+
+They submitted but didn’t confirm
+
+This is the only event that moves a lead into the COMPLETED tab.
+
+2) Data Model Requirements
+2.1 Leads table additions
+
+Add these columns to leads (if missing):
+
+signed_up_at (timestamp, nullable)
+
+signed_up_email (text, nullable) — email that actually signed up
+
+signed_up_member_id (text, nullable) — ID from SupplyStreamline (optional but recommended)
+
+signup_source (text, nullable) — e.g., "webhook", "manual"
+
+Existing column used:
+
+status_signup (text/enum)
+
+Must support at least:
+
+NOT_SIGNED_UP (default)
+
+SIGNED_UP
+
+2.2 Signup events table (strongly recommended for audit)
+
+Create signup_events table:
+
+id (pk)
+
+lead_id (fk)
+
+lead_token (text)
+
+event_type (text) — SIGNUP_CONFIRMED (and later maybe SIGNUP_STARTED)
+
+received_at (timestamp default now)
+
+payload_raw (json/text)
+
+source (text) — "webhook", "manual"
+
+source_ip (text nullable)
+
+user_agent (text nullable)
+
+idempotency_key (text nullable)
+
+Why: debugging, duplicates, trust, audit trail.
+
+3) Webhook API Requirements
+3.1 Endpoint
+
+POST /api/signup/webhook
+
+3.2 Authentication (required)
+
+Use a shared secret header:
+
+Secret stored in server env:
+
+SIGNUP_WEBHOOK_SECRET
+
+SupplyStreamline must send header:
+
+X-SS-Webhook-Secret: <secret>
+
+Server behavior:
+
+Missing/invalid secret → 401 Unauthorized
+
+This prevents random calls from marking leads completed.
+
+3.3 Payload contract
+Minimum payload (required)
+{
+  "lead_token": "uuid"
+}
+
+Recommended payload (best practice)
+{
+  "lead_token": "uuid",
+  "event": "signup_confirmed",
+  "email": "user@example.com",
+  "member_id": "SS-12345",
+  "confirmed_at": "2026-02-18T20:15:00Z",
+  "idempotency_key": "unique-string"
+}
+
+
+Notes:
+
+confirmed_at preferred for signed_up_at if provided
+
+idempotency_key prevents duplicate processing (optional but recommended)
+
+4) Server-Side Logic (Must be enforced server-side)
+4.1 Validation steps
+
+Verify secret header
+
+Validate payload has lead_token
+
+Find lead by lead_token
+
+If not found:
+
+Option A: return 404
+
+Option B: return 200 with {accepted:false} to avoid token probing
+(Pick one; I recommend 404 in internal V1.)
+
+4.2 Idempotency (critical)
+
+If lead already has status_signup = SIGNED_UP:
+
+Do not error
+
+Return 200 with:
+
+{ "ok": true, "already_signed_up": true }
+
+4.3 Atomic update (transaction)
+
+In a single DB transaction:
+
+Update lead:
+
+status_signup = SIGNED_UP
+
+signed_up_at = confirmed_at || now()
+
+signed_up_email = payload.email || existing
+
+signed_up_member_id = payload.member_id || existing
+
+signup_source = "webhook"
+
+Insert signup_events row with raw payload and metadata
+
+Return:
+
+{ "ok": true, "lead_id": 123, "status_signup": "SIGNED_UP" }
+
+5) UI/Workflow Requirements
+5.1 Immediate lead movement
+
+When status_signup becomes SIGNED_UP:
+
+Lead is removed from:
+
+NEW
+
+RETRY
+
+ACTIVE/PENDING
+
+Lead appears in:
+
+COMPLETED tab
+
+This should happen automatically without refresh delays:
+
+Either via query invalidation on relevant pages
+
+Or simple polling/refresh on Today View
+
+5.2 Lead detail display
+
+Add a Signup Status section showing:
+
+Status: SIGNED_UP
+
+Signed Up At: timestamp
+
+Signed Up Email: (if present)
+
+Source: webhook/manual
+
+Member ID: (if present)
+
+6) Manual Fallback (Admin-only) — Required for operations
+
+Even with webhook, build a manual override:
+
+Button on Lead Detail (Admin-only)
+
+Mark Signed Up
+
+Behavior:
+
+Confirm dialog: “Are you sure?”
+
+Optional input:
+
+signed_up_email
+
+signed_up_at (date/time picker)
+
+member_id (optional)
+
+On save:
+
+Sets status_signup = SIGNED_UP
+
+Sets signed_up_at (now if not entered)
+
+Creates signup_events row with source = "manual"
+
+This prevents operational dead-ends if:
+
+Someone signed up without tracking link
+
+Token didn’t pass through
+
+Webhook failed
+
+7) KPI + Reporting Requirements
+7.1 Admin KPIs
+
+Add admin metrics (dashboard or admin metrics page):
+
+Signups Today
+
+Signups This Week
+
+Signups This Month
+
+Optional breakdowns:
+
+By caller (assigned_to_user_id)
+
+By pipeline (vendor vs buyer)
+
+By state/category
+
+7.2 Funnel conversion metrics enabled
+
+Since you track email clicks:
+
+Click → Signup %
+
+Open → Signup %
+
+Email Sent → Signup %
+
+Suggested base calculation:
+
+Signed up count / Clicked count (within timeframe)
+
+8) SupplyStreamline Website Requirements (External)
+
+To make Stage 6 work, SupplyStreamline must:
+
+Preserve ref=<lead_token> from the signup link
+
+Store it on the signup record
+
+When user confirms email:
+
+fire webhook to onboarding app:
+
+POST /api/signup/webhook
+
+include lead_token
+
+include email/member_id if possible
+
+include secret header
+
+9) Testing Requirements (Acceptance)
+
+Must pass:
+
+Valid webhook marks lead SIGNED_UP and moves it to COMPLETED
+
+Duplicate webhook call does not change anything (idempotent)
+
+Invalid secret returns 401
+
+Unknown token returns 404 (or accepted false)
+
+Manual Mark Signed Up works and logs signup_events
+
+Completed tab shows only SIGNED_UP leads
+
+10) Chronological Implementation Plan (Best Order)
+
+Add DB fields + signup_events table
+
+Build webhook endpoint with secret header verification
+
+Add lead movement rules + UI status display
+
+Add Admin “Mark Signed Up” button + event logging
+
+Add admin KPI counters for signups
+
+Add test coverage
+
+One decision to lock
+
+Do you want unknown lead_token to return:
+A) 404 Not Found (simple, internal)
+B) 200 OK but accepted:false (reduces token probing risk)
+
+Which do you prefer?
