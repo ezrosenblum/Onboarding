@@ -1,0 +1,272 @@
+Automatic Email System — Final Design
+🎯 Goal
+
+Caller workflow should be:
+
+Make call
+
+Select outcome (SPOKE_SEND_INFO or FOLLOW_UP)
+
+Enter:
+
+Confirmed email
+
+Contact name (the person spoken to)
+
+Click “Send Info”
+
+System handles everything else automatically.
+
+No free-text email writing.
+
+1️⃣ Required Data Fields (Lead Level)
+
+Add/ensure:
+
+confirmed_email
+
+contact_name ← new required field after positive call
+
+last_spoken_at
+
+caller_user_id
+
+status_email
+
+lead_token (already exists)
+
+Contact name must be stored so:
+
+Future emails can use it
+
+Follow-ups can reference it
+
+2️⃣ Email Templates (Locked + Admin Editable)
+
+Templates remain admin-editable but not caller-editable.
+
+Templates must use variables:
+
+Hi {{contact_name}},
+
+It was a pleasure speaking with you earlier regarding {{company_name}}...
+
+...
+{{signup_link}}
+
+Best,
+{{caller_name}}
+SupplyStreamline
+
+
+Allowed variables:
+
+{{contact_name}}
+
+{{company_name}}
+
+{{caller_name}}
+
+{{signup_link}}
+
+{{city}}
+
+{{state}}
+
+No dynamic AI insertion here — just structured.
+
+3️⃣ Caller Workflow (Strict)
+3.1 Call Outcome = SPOKE_SEND_INFO
+
+System immediately requires:
+
+Confirmed email
+
+Contact name
+
+If either missing → block send button.
+
+Then:
+
+Caller clicks “Send Info”
+
+System:
+
+Builds email using template
+
+Injects variables
+
+Sends via SendGrid
+
+Logs email
+
+Sets status_email = SENT
+
+No editing allowed.
+
+4️⃣ Follow-Up Email Logic
+
+Follow-up becomes available only if:
+
+SEND_INFO already sent
+
+No signup yet
+
+Lead not unreachable
+
+Follow-up template automatically references prior conversation.
+
+No manual writing.
+
+5️⃣ Unreachable Outreach
+
+If:
+
+3 attempts reached
+
+Or unreachable
+
+System may allow “Final Outreach” email.
+
+Still template-based.
+Still automatic.
+
+6️⃣ Inbound Replies Handling (Automatic)
+
+When lead replies:
+
+System:
+
+Attaches to correct lead
+
+Marks thread as “Replied”
+
+Caller sees reply in Email tab
+
+Caller may reply using:
+
+Structured quick reply (optional)
+
+OR single reply box (controlled but minimal)
+
+Still no open drafting freedom.
+
+7️⃣ Strict Rules (To Protect Conversion Data)
+
+Caller cannot:
+
+Send custom email text
+
+Modify subject
+
+Modify body
+
+Send before logging call
+
+Admin can:
+
+Edit template globally
+
+Not per lead
+
+This preserves:
+
+A/B testing potential
+
+Conversion measurement accuracy
+
+Script discipline
+
+8️⃣ Email Sending Logic Details
+
+When Send Info clicked:
+
+System must:
+
+Validate:
+
+contact_name exists
+
+confirmed_email exists
+
+call log exists
+
+Generate:
+
+Unique signup_link:
+https://supplystreamline.com/signup?ref={{lead_token}}
+
+Send via SendGrid:
+
+From: connect@supplystreamline.com
+
+Reply-To: lead_<lead_token>@reply.supplystreamline.com
+
+Log email in email_logs
+
+Update lead:
+
+status_email = SENT
+
+email_sent_at = now()
+
+9️⃣ Metrics Enabled
+
+Because emails are standardized:
+
+You can measure:
+
+Call → Email %
+
+Email → Open %
+
+Open → Click %
+
+Click → Signup %
+
+Caller-level performance
+
+If callers wrote custom emails, this data would be polluted.
+
+🔟 Edge Case Handling
+
+If contact_name unknown:
+
+Require caller to enter:
+
+“Front Desk”
+
+“Owner”
+
+“Manager”
+(But must not be blank)
+
+If email bounces:
+
+Mark email invalid
+
+Prevent future email sends
+
+If lead replies:
+
+Show notification badge
+
+11️⃣ Long-Term Upgrade Path
+
+Later, you can allow:
+
+AI-generated personalization
+
+Or admin-level personalization tokens
+
+But V1 should remain disciplined.
+
+Final Structure Summary
+
+✔ Caller logs call
+✔ Enters email + contact name
+✔ Clicks Send
+✔ System builds structured email
+✔ Tracks opens/clicks
+✔ Tracks signup
+✔ All centralized

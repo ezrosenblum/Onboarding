@@ -1,0 +1,394 @@
+Full Email Handling System — Detailed Operational Plan
+🎯 Purpose of Email System
+
+The email system exists to:
+
+• Convert calls into signups
+• Keep all communication centralized
+• Track every engagement event
+• Provide measurable conversion metrics
+• Prevent callers from using outside email tools
+
+Everything must live inside this app.
+
+1️⃣ Core Email Philosophy
+
+All outbound emails are sent from:
+
+connect@supplystreamline.com
+
+
+All inbound replies must:
+
+Appear inside the app
+
+Be visible on the lead page
+
+Be part of that lead’s email thread
+
+No Gmail.
+
+No external inbox.
+
+No fragmented communication.
+
+2️⃣ Outbound Email (Already Designed)
+2.1 Templates (Admin Editable)
+
+Templates per pipeline:
+
+SEND_INFO
+
+FOLLOW_UP
+
+UNREACHABLE_OUTREACH
+
+Admin can edit:
+
+Subject
+
+Body
+
+Variables
+
+Variables:
+
+{{company_name}}
+
+{{contact_email}}
+
+{{caller_name}}
+
+{{signup_link}}
+
+{{city}}
+
+{{state}}
+
+Templates are stored in DB.
+Emails always pull latest saved version.
+
+2.2 Gating Rules
+SEND_INFO
+
+Allowed only if:
+
+At least one call logged
+
+Confirmed email exists
+
+Lead not unreachable
+
+FOLLOW_UP
+
+Allowed only if:
+
+SEND_INFO already sent
+
+Confirmed email exists
+
+UNREACHABLE_OUTREACH
+
+Allowed if:
+
+Unreachable OR max attempts reached
+
+Email exists (confirmed preferred, else scraped)
+
+2.3 Email Status Tracking
+
+Lead has:
+
+status_email:
+
+NOT_SENT
+
+SENT
+
+OPENED
+
+CLICKED
+
+BOUNCED
+
+Email events stored:
+
+sent
+
+delivered
+
+open
+
+click
+
+bounce
+
+dropped
+
+spamreport
+
+Webhook endpoint:
+
+POST /api/sendgrid/events
+
+
+Maps event using:
+
+lead_token (custom arg)
+
+or message_id
+
+3️⃣ Inbound Email Handling (What We Discussed)
+
+This is the part that needs to be fully structured.
+
+🎯 Goal
+
+If a lead replies to:
+
+connect@supplystreamline.com
+
+
+That reply must:
+
+• Be captured automatically
+• Be attached to the correct lead
+• Appear in the lead’s Email tab
+• Appear in a global Email Inbox inside the app
+• Trigger activity tracking
+
+4️⃣ Inbound Email Architecture
+
+We discussed using SendGrid for everything.
+
+So inbound email must use:
+
+SendGrid Inbound Parse Webhook
+
+Flow:
+
+Lead replies to email
+
+SendGrid receives reply
+
+SendGrid POSTs to:
+
+/api/sendgrid/inbound
+
+
+App processes payload
+
+App attaches message to correct lead
+
+5️⃣ Lead Matching Logic
+
+How do we attach reply to correct lead?
+
+We must include hidden identifiers in outbound emails.
+
+Options:
+
+Preferred: Custom Reply-To Address
+
+Outbound email sets:
+
+Reply-To: lead_<lead_token>@reply.supplystreamline.com
+
+
+Inbound parse receives:
+
+to = lead_<lead_token>@reply.supplystreamline.com
+
+System extracts:
+
+lead_token
+
+Finds lead
+
+Stores email
+
+This is the cleanest method.
+
+Alternative (less ideal)
+
+Parse subject line with embedded token.
+Not recommended.
+
+6️⃣ Email Thread Model
+
+Each lead should have:
+
+Lead Email Tab
+
+Display:
+
+Sent emails
+
+Replies
+
+Status updates
+
+Threaded conversation
+
+Looks like simplified Gmail view:
+
+Example:
+
+You (Send Info) – Jan 2
+Lead reply – Jan 3
+You (Follow Up) – Jan 5
+
+
+Each message includes:
+
+Timestamp
+
+Sender
+
+Subject
+
+Body
+
+Attachment indicator (optional)
+
+7️⃣ Global Email Inbox (Inside App)
+
+Admin + Caller see:
+
+Email Section in Sidebar:
+
+Inbox
+
+Unread
+
+Assigned to me
+
+All
+
+Filters:
+
+By lead
+
+By caller
+
+By date
+
+Unreplied threads
+
+8️⃣ Email Status Behavior
+
+When inbound reply arrives:
+
+lead.status_email remains unchanged
+
+Add “Replied” flag on thread
+
+Add badge in Today View (optional future)
+
+Increase engagement score (future Stage 8)
+
+9️⃣ Email Reply from Inside App
+
+Caller should be able to:
+
+Click Reply
+
+Write message
+
+Send via SendGrid
+
+Thread stays intact
+
+Must use:
+
+Same connect@supplystreamline.com
+ sender
+
+Same custom Reply-To logic
+
+🔟 Email Analytics Layer
+
+Admin can measure:
+
+Emails sent
+
+Opens
+
+Clicks
+
+Replies
+
+Reply rate
+
+Click → Signup rate
+
+Email version performance (A/B later)
+
+1️⃣1️⃣ Edge Cases
+
+Must handle:
+
+Bounce → mark lead email invalid
+
+Spam report → suppress future emails
+
+Multiple replies → thread all
+
+Forwarded emails → attempt to attach to correct thread
+
+Attachments (store metadata, optional V1 ignore actual file)
+
+1️⃣2️⃣ Clean Domain Handling
+
+We discussed:
+
+You want to use:
+
+connect@supplystreamline.com
+
+
+Not subdomain.
+Not noreply.
+Not external Gmail.
+
+Requirements:
+
+Domain verified in SendGrid
+
+SPF/DKIM configured
+
+Inbound parse configured for subdomain (reply.supplystreamline.com)
+
+1️⃣3️⃣ Full Email System Flow
+
+Call → SEND_INFO → Open → Click → Signup
+OR
+Call → SEND_INFO → Reply → Caller responds → Signup
+
+All inside the app.
+
+No email leaves the ecosystem.
+
+1️⃣4️⃣ Security
+
+Inbound webhook should verify SendGrid signature (optional but recommended)
+
+Prevent spoofing
+
+Sanitize HTML
+
+Prevent XSS from email body
+
+1️⃣5️⃣ Admin Controls
+
+Admin should be able to:
+
+Edit templates
+
+View full inbox
+
+Override suppression
+
+Manually log email
+
+Manually attach email to lead
