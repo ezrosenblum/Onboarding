@@ -921,6 +921,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteLead(id: number): Promise<void> {
+    const relatedCalls = await db.select({ id: callLogs.id }).from(callLogs).where(eq(callLogs.leadId, id));
+    if (relatedCalls.length > 0) {
+      const callIds = relatedCalls.map(c => c.id);
+      await db.delete(callEvents).where(inArray(callEvents.callLogId, callIds));
+    }
+    await db.delete(aiResearch).where(eq(aiResearch.leadId, id));
+    await db.delete(signupEvents).where(eq(signupEvents.leadId, id));
+    await db.delete(emailEvents).where(eq(emailEvents.leadId, id));
     await db.delete(callLogs).where(eq(callLogs.leadId, id));
     await db.delete(leadNotes).where(eq(leadNotes.leadId, id));
     await db.delete(emailLogs).where(eq(emailLogs.leadId, id));
@@ -930,6 +938,14 @@ export class DatabaseStorage implements IStorage {
 
   async bulkDeleteLeads(ids: number[]): Promise<number> {
     if (ids.length === 0) return 0;
+    const relatedCalls = await db.select({ id: callLogs.id }).from(callLogs).where(inArray(callLogs.leadId, ids));
+    if (relatedCalls.length > 0) {
+      const callIds = relatedCalls.map(c => c.id);
+      await db.delete(callEvents).where(inArray(callEvents.callLogId, callIds));
+    }
+    await db.delete(aiResearch).where(inArray(aiResearch.leadId, ids));
+    await db.delete(signupEvents).where(inArray(signupEvents.leadId, ids));
+    await db.delete(emailEvents).where(inArray(emailEvents.leadId, ids));
     await db.delete(callLogs).where(inArray(callLogs.leadId, ids));
     await db.delete(leadNotes).where(inArray(leadNotes.leadId, ids));
     await db.delete(emailLogs).where(inArray(emailLogs.leadId, ids));
