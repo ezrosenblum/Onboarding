@@ -286,7 +286,14 @@ export async function registerRoutes(
       if (rating !== undefined) updateData.rating = rating;
       if (statusCall !== undefined) updateData.statusCall = statusCall;
       if (statusSignup !== undefined) updateData.statusSignup = statusSignup;
-      if (assignedToUserId !== undefined) updateData.assignedToUserId = assignedToUserId;
+      if (assignedToUserId !== undefined) {
+        updateData.assignedToUserId = assignedToUserId;
+        if (assignedToUserId === null) {
+          updateData.assignedAt = null;
+        } else {
+          updateData.assignedAt = new Date();
+        }
+      }
     }
     const updated = await storage.updateLead(id, updateData);
     res.json(updated);

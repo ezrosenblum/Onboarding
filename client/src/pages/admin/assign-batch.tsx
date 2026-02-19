@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Search, UserCheck, Loader2, Users, AlertTriangle } from "lucide-react";
+import { Search, UserCheck, UserMinus, Loader2, Users, AlertTriangle } from "lucide-react";
 
 interface CallerQueue {
   userId: number;
@@ -100,6 +100,26 @@ export default function AssignBatchPage() {
     },
     onError: (err: any) => {
       toast({ title: "Assignment failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const unassignMutation = useMutation({
+    mutationFn: async () => {
+      if (selectedIds.size === 0) throw new Error("No leads selected");
+      const promises = Array.from(selectedIds).map((leadId) =>
+        apiRequest("PATCH", `/api/leads/${leadId}`, { assignedToUserId: null })
+      );
+      await Promise.all(promises);
+    },
+    onSuccess: () => {
+      toast({ title: "Unassignment complete", description: `${selectedIds.size} lead(s) unassigned successfully.` });
+      setSelectedIds(new Set());
+      queryClient.invalidateQueries({ queryKey: ["/api/leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/caller-queues"] });
+      handleSearch();
+    },
+    onError: (err: any) => {
+      toast({ title: "Unassignment failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -270,7 +290,7 @@ export default function AssignBatchPage() {
                       </Select>
                     )}
                   </div>
-                  <div className="pt-4">
+                  <div className="pt-4 flex items-center gap-2 flex-wrap">
                     <Button
                       onClick={() => assignMutation.mutate()}
                       disabled={selectedIds.size === 0 || !selectedUserId || assignMutation.isPending}
@@ -278,6 +298,15 @@ export default function AssignBatchPage() {
                     >
                       {assignMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserCheck className="h-4 w-4 mr-2" />}
                       Assign Selected ({selectedIds.size})
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => unassignMutation.mutate()}
+                      disabled={selectedIds.size === 0 || unassignMutation.isPending}
+                      data-testid="button-unassign-selected"
+                    >
+                      {unassignMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserMinus className="h-4 w-4 mr-2" />}
+                      Unassign Selected ({selectedIds.size})
                     </Button>
                   </div>
                 </div>
