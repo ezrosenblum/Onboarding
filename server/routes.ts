@@ -1596,6 +1596,23 @@ export async function registerRoutes(
     res.json(analysis);
   });
 
+  app.get("/api/admin/caller-queues", requireAuth, requireAdmin, async (_req, res) => {
+    const queues = await storage.getCallerQueues();
+    res.json(queues);
+  });
+
+  app.get("/api/admin/daily-assignments", requireAuth, requireAdmin, async (req, res) => {
+    const days = req.query.days ? parseInt(req.query.days as string) : 14;
+    const history = await storage.getDailyAssignmentHistory(days);
+    res.json(history);
+  });
+
+  app.get("/api/admin/daily-assignments/:date", requireAuth, requireAdmin, async (req, res) => {
+    const dateStr = req.params.date;
+    const leads = await storage.getLeadsAssignedOnDate(dateStr);
+    res.json(leads);
+  });
+
   app.post("/api/sendgrid/inbound", async (req, res) => {
     try {
       const { to, from, subject, text, html, envelope } = req.body;

@@ -118,6 +118,9 @@ export interface IStorage {
   bulkDeleteLeads(ids: number[]): Promise<number>;
   getFilteredLeads(filters: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean; unassigned?: boolean }, limit?: number): Promise<Lead[]>;
   getLeadsAssignedToday(): Promise<Lead[]>;
+  getCallerQueues(): Promise<{ userId: number; userName: string; uncalledCount: number; totalAssigned: number }[]>;
+  getDailyAssignmentHistory(days: number): Promise<{ date: string; totalAssigned: number; totalCalled: number; callers: { userId: number; userName: string; assigned: number; called: number }[] }[]>;
+  getLeadsAssignedOnDate(dateStr: string): Promise<Lead[]>;
 
   getCallLogByTwilioSid(sid: string): Promise<CallLog | undefined>;
   updateCallLog(id: number, data: Partial<CallLog>): Promise<CallLog | undefined>;
@@ -974,6 +977,82 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(leads)
       .where(and(
         sql`${leads.assignedAt} >= ${today}`,
+        sql`${leads.assignedToUserId} IS NOT NULL`
+      ))
+      .orderBy(leads.assignedToUserId, leads.id);
+  }
+
+  async getCallerQueues(): Promise<{ userId: number; userName: string; uncalledCount: number; totalAssigned: number }[]> {
+    const allAssigned = await db.select().from(leads)
+      .where(and(
+        sql`${leads.assignedToUserId} IS NOT NULL`,
+        eq(leads.pipelineType, "vendor")
+      ));
+    const allUsers = await db.select().from(users);
+    const userMap = new Map(allUsers.map(u => [u.id, u.name]));
+
+    const grouped: Record<number, { total: number; uncalled: number }> = {};
+    for (const lead of allAssigned) {
+      const uid = lead.assignedToUserId!;
+      if (!grouped[uid]) grouped[uid] = { total: 0, uncalled: 0 };
+      grouped[uid].total++;
+      if (lead.statusCall === "NOT_CALLED") grouped[uid].uncalled++;
+    }
+
+    return Object.entries(grouped).map(([uid, stats]) => ({
+      userId: parseInt(uid),
+      userName: userMap.get(parseInt(uid)) ?? `User #${uid}`,
+      uncalledCount: stats.uncalled,
+      totalAssigned: stats.total,
+    }));
+  }
+
+  async getDailyAssignmentHistory(days: number): Promise<{ date: string; totalAssigned: number; totalCalled: number; callers: { userId: number; userName: string; assigned: number; called: number }[] }[]> {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    since.setHours(0, 0, 0, 0);
+
+    const assigned = await db.select().from(leads)
+      .where(and(
+        sql`${leads.assignedAt} >= ${since}`,
+        sql`${leads.assignedToUserId} IS NOT NULL`
+      ));
+
+    const allUsers = await db.select().from(users);
+    const userMap = new Map(allUsers.map(u => [u.id, u.name]));
+
+    const byDate: Record<string, Record<number, Lead[]>> = {};
+    for (const lead of assigned) {
+      if (!lead.assignedAt) continue;
+      const dateStr = new Date(lead.assignedAt).toISOString().split("T")[0];
+      const uid = lead.assignedToUserId!;
+      if (!byDate[dateStr]) byDate[dateStr] = {};
+      if (!byDate[dateStr][uid]) byDate[dateStr][uid] = [];
+      byDate[dateStr][uid].push(lead);
+    }
+
+    return Object.entries(byDate)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([date, callerLeads]) => {
+        const callers = Object.entries(callerLeads).map(([uid, lds]) => ({
+          userId: parseInt(uid),
+          userName: userMap.get(parseInt(uid)) ?? `User #${uid}`,
+          assigned: lds.length,
+          called: lds.filter(l => l.statusCall !== "NOT_CALLED").length,
+        }));
+        const totalAssigned = callers.reduce((s, c) => s + c.assigned, 0);
+        const totalCalled = callers.reduce((s, c) => s + c.called, 0);
+        return { date, totalAssigned, totalCalled, callers };
+      });
+  }
+
+  async getLeadsAssignedOnDate(dateStr: string): Promise<Lead[]> {
+    const startOfDay = new Date(dateStr + "T00:00:00.000Z");
+    const endOfDay = new Date(dateStr + "T23:59:59.999Z");
+    return db.select().from(leads)
+      .where(and(
+        sql`${leads.assignedAt} >= ${startOfDay}`,
+        sql`${leads.assignedAt} <= ${endOfDay}`,
         sql`${leads.assignedToUserId} IS NOT NULL`
       ))
       .orderBy(leads.assignedToUserId, leads.id);

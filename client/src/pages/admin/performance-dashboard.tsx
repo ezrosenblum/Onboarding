@@ -4,9 +4,10 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Activity, Phone, Mail, Reply, MousePointerClick, Eye, UserCheck, TrendingUp, ArrowRight, AlertTriangle, Clock, MapPin, Tag, Info, ChevronDown, ChevronUp, BarChart3 } from "lucide-react";
+import { Activity, Phone, Mail, Reply, MousePointerClick, Eye, UserCheck, TrendingUp, ArrowRight, AlertTriangle, Clock, MapPin, Tag, Info, ChevronDown, ChevronUp, BarChart3, CalendarDays, Users, CheckCircle2, PhoneOff, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "wouter";
+import type { Lead } from "@shared/schema";
 
 interface AlertItem {
   type: string;
@@ -37,6 +38,24 @@ interface CategoryStateAnalysis {
   byRatingBand: { band: string; calls: number; signups: number; conversionPct: number }[];
   bySourceFile: { sourceFile: string; totalLeads: number; calls: number; signups: number; conversionPct: number }[];
 }
+
+interface DailyAssignment {
+  date: string;
+  totalAssigned: number;
+  totalCalled: number;
+  callers: { userId: number; userName: string; assigned: number; called: number }[];
+}
+
+const CALL_STATUS_CONFIG: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
+  NOT_CALLED: { label: "Not Called", variant: "outline" },
+  NO_ANSWER: { label: "No Answer", variant: "secondary" },
+  SPOKE_INTERESTED: { label: "Interested", variant: "default" },
+  SPOKE_SEND_INFO: { label: "Send Info", variant: "default" },
+  SPOKE_NOT_INTERESTED: { label: "Not Interested", variant: "destructive" },
+  SPOKE_ALREADY_SIGNED_UP: { label: "Already Signed", variant: "secondary" },
+  WRONG_NUMBER: { label: "Wrong Number", variant: "destructive" },
+  VOICEMAIL: { label: "Voicemail", variant: "secondary" },
+};
 
 interface CallerPerformance {
   userId: number;
@@ -138,6 +157,10 @@ export default function PerformanceDashboardPage() {
       if (!res.ok) throw new Error("Failed to fetch");
       return res.json();
     },
+  });
+
+  const { data: dailyAssignments } = useQuery<DailyAssignment[]>({
+    queryKey: ["/api/admin/daily-assignments"],
   });
 
   const [expandedLeakSections, setExpandedLeakSections] = useState<Record<string, boolean>>({});
@@ -586,6 +609,189 @@ export default function PerformanceDashboardPage() {
           </Card>
         </>
       ) : null}
+
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <h3 className="text-lg font-semibold flex items-center gap-2"><CalendarDays className="h-5 w-5" /> Daily Assignments</h3>
+            <Badge variant="secondary" data-testid="badge-daily-assignment-days">Last 14 days</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {!dailyAssignments ? (
+            <div className="space-y-3">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : dailyAssignments.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-daily-assignments">No assignment data available for the selected period.</p>
+          ) : (
+            <DailyAssignmentsList assignments={dailyAssignments} />
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function DailyAssignmentsList({ assignments }: { assignments: DailyAssignment[] }) {
+  const [expandedDates, setExpandedDates] = useState<Record<string, boolean>>({});
+  const [expandedCallers, setExpandedCallers] = useState<Record<string, boolean>>({});
+  const [callerLeads, setCallerLeads] = useState<Record<string, Lead[]>>({});
+  const [loadingDates, setLoadingDates] = useState<Record<string, boolean>>({});
+
+  const toggleDate = async (date: string) => {
+    const isOpen = expandedDates[date];
+    setExpandedDates((prev) => ({ ...prev, [date]: !isOpen }));
+
+    if (!isOpen && !callerLeads[date]) {
+      setLoadingDates((prev) => ({ ...prev, [date]: true }));
+      try {
+        const res = await fetch(`/api/admin/daily-assignments/${date}`, { credentials: "include" });
+        if (res.ok) {
+          const leads = await res.json();
+          setCallerLeads((prev) => ({ ...prev, [date]: leads }));
+        }
+      } finally {
+        setLoadingDates((prev) => ({ ...prev, [date]: false }));
+      }
+    }
+  };
+
+  const toggleCaller = (key: string) => {
+    setExpandedCallers((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const formatDate = (dateStr: string) => {
+    const d = new Date(dateStr + "T12:00:00");
+    return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  };
+
+  return (
+    <div className="space-y-2" data-testid="daily-assignments-list">
+      {assignments.map((day) => {
+        const isOpen = expandedDates[day.date];
+        const pct = day.totalAssigned > 0 ? Math.round((day.totalCalled / day.totalAssigned) * 100) : 0;
+        const leadsForDay = callerLeads[day.date] ?? [];
+        const isLoadingDay = loadingDates[day.date];
+
+        return (
+          <div key={day.date} className="border rounded-md" data-testid={`daily-row-${day.date}`}>
+            <button
+              className="w-full p-3 flex items-center justify-between gap-4 text-left hover-elevate rounded-md"
+              onClick={() => toggleDate(day.date)}
+              data-testid={`button-toggle-date-${day.date}`}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                {isOpen ? <ChevronUp className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+                <span className="font-medium text-sm">{formatDate(day.date)}</span>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="flex items-center gap-1.5">
+                  <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-sm">{day.totalAssigned}</span>
+                </div>
+                <div className="w-20 h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-primary rounded-full" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="text-xs text-muted-foreground w-10 text-right">{pct}%</span>
+              </div>
+            </button>
+
+            {isOpen && (
+              <div className="px-3 pb-3 space-y-2">
+                {isLoadingDay ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-2 pl-7">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading leads...
+                  </div>
+                ) : (
+                  day.callers.map((caller) => {
+                    const callerKey = `${day.date}-${caller.userId}`;
+                    const callerOpen = expandedCallers[callerKey];
+                    const callerPct = caller.assigned > 0 ? Math.round((caller.called / caller.assigned) * 100) : 0;
+                    const callerLeadsFiltered = leadsForDay.filter((l) => l.assignedToUserId === caller.userId);
+
+                    return (
+                      <div key={callerKey} className="border rounded-md ml-6" data-testid={`caller-row-${callerKey}`}>
+                        <button
+                          className="w-full p-2.5 flex items-center justify-between gap-3 text-left hover-elevate rounded-md"
+                          onClick={() => toggleCaller(callerKey)}
+                          data-testid={`button-toggle-caller-${callerKey}`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {callerOpen ? <ChevronUp className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+                            <UserCheck className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            <span className="text-sm font-medium truncate">{caller.userName}</span>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <Badge variant="secondary" className="text-xs">{caller.assigned} assigned</Badge>
+                            <div className="flex items-center gap-1.5">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-green-600 dark:text-green-500" />
+                              <span className="text-xs">{caller.called}</span>
+                              {caller.assigned - caller.called > 0 && (
+                                <>
+                                  <PhoneOff className="h-3.5 w-3.5 text-muted-foreground ml-1" />
+                                  <span className="text-xs text-muted-foreground">{caller.assigned - caller.called}</span>
+                                </>
+                              )}
+                            </div>
+                            <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+                              <div className="h-full bg-green-600 dark:bg-green-500 rounded-full" style={{ width: `${callerPct}%` }} />
+                            </div>
+                          </div>
+                        </button>
+
+                        {callerOpen && callerLeadsFiltered.length > 0 && (
+                          <div className="px-3 pb-2">
+                            <div className="border rounded-md overflow-x-auto">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="border-b bg-muted/50">
+                                    <th className="p-2 text-left font-medium">Company</th>
+                                    <th className="p-2 text-left font-medium">State</th>
+                                    <th className="p-2 text-left font-medium">Call Status</th>
+                                    <th className="p-2 text-left font-medium">Signup</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {callerLeadsFiltered.map((lead) => {
+                                    const statusConf = CALL_STATUS_CONFIG[lead.statusCall] ?? { label: lead.statusCall, variant: "outline" as const };
+                                    return (
+                                      <tr key={lead.id} className="border-b last:border-b-0" data-testid={`daily-lead-${lead.id}`}>
+                                        <td className="p-2">
+                                          <Link href={`/leads/${lead.id}`} className="text-primary hover:underline">
+                                            {lead.companyName}
+                                          </Link>
+                                        </td>
+                                        <td className="p-2 text-muted-foreground">{lead.state || "-"}</td>
+                                        <td className="p-2">
+                                          <Badge variant={statusConf.variant} className="text-xs">{statusConf.label}</Badge>
+                                        </td>
+                                        <td className="p-2">
+                                          {lead.statusSignup === "SIGNED_UP" ? (
+                                            <Badge variant="default" className="text-xs">Signed Up</Badge>
+                                          ) : (
+                                            <span className="text-muted-foreground">-</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
