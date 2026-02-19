@@ -21,6 +21,7 @@ export default function AssignBatchPage() {
   const [hasPhone, setHasPhone] = useState(false);
   const [hasEmail, setHasEmail] = useState(false);
   const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [loadLimit, setLoadLimit] = useState("100");
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [searched, setSearched] = useState(false);
@@ -42,6 +43,7 @@ export default function AssignBatchPage() {
       if (hasPhone) params.set("hasPhone", "true");
       if (hasEmail) params.set("hasEmail", "true");
       if (unassignedOnly) params.set("unassigned", "true");
+      if (loadLimit) params.set("limit", loadLimit);
       const res = await fetch(`/api/leads/filtered?${params.toString()}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch leads");
       const data = await res.json();
@@ -168,6 +170,20 @@ export default function AssignBatchPage() {
                 data-testid="checkbox-unassigned-only"
               />
               <Label htmlFor="unassigned-only" className="text-sm cursor-pointer">Unassigned Only</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="load-limit" className="text-sm text-muted-foreground whitespace-nowrap">Load up to</Label>
+              <Input
+                id="load-limit"
+                type="number"
+                min={1}
+                max={5000}
+                value={loadLimit}
+                onChange={(e) => setLoadLimit(e.target.value)}
+                className="w-24"
+                data-testid="input-load-limit"
+              />
+              <Label className="text-sm text-muted-foreground">leads</Label>
             </div>
           </div>
 

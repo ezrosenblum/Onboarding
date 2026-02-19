@@ -116,7 +116,7 @@ export interface IStorage {
   deleteUser(id: number): Promise<void>;
   deleteLead(id: number): Promise<void>;
   bulkDeleteLeads(ids: number[]): Promise<number>;
-  getFilteredLeads(filters: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean; unassigned?: boolean }): Promise<Lead[]>;
+  getFilteredLeads(filters: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean; unassigned?: boolean }, limit?: number): Promise<Lead[]>;
 
   getCallLogByTwilioSid(sid: string): Promise<CallLog | undefined>;
   updateCallLog(id: number, data: Partial<CallLog>): Promise<CallLog | undefined>;
@@ -954,7 +954,7 @@ export class DatabaseStorage implements IStorage {
     return deleted.length;
   }
 
-  async getFilteredLeads(filters: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean; unassigned?: boolean }): Promise<Lead[]> {
+  async getFilteredLeads(filters: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean; unassigned?: boolean }, limit?: number): Promise<Lead[]> {
     const conditions: any[] = [eq(leads.pipelineType, "vendor")];
     if (filters.unassigned) conditions.push(sql`${leads.assignedToUserId} IS NULL`);
     if (filters.state) conditions.push(sql`LOWER(${leads.state}) = LOWER(${filters.state})`);
@@ -962,7 +962,9 @@ export class DatabaseStorage implements IStorage {
     if (filters.minRating) conditions.push(gte(leads.rating, String(filters.minRating)));
     if (filters.hasPhone) conditions.push(sql`${leads.phone} IS NOT NULL AND ${leads.phone} != ''`);
     if (filters.hasEmail) conditions.push(sql`(${leads.scrapedEmail} IS NOT NULL AND ${leads.scrapedEmail} != '') OR (${leads.confirmedEmail} IS NOT NULL AND ${leads.confirmedEmail} != '')`);
-    return db.select().from(leads).where(and(...conditions)).orderBy(leads.id);
+    let query = db.select().from(leads).where(and(...conditions)).orderBy(leads.id);
+    if (limit && limit > 0) return (query as any).limit(limit);
+    return query;
   }
 
   async getCallLogByTwilioSid(sid: string): Promise<CallLog | undefined> {

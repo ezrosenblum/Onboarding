@@ -236,6 +236,19 @@ export async function registerRoutes(
     });
   });
 
+  app.get("/api/leads/filtered", requireAdmin, async (req, res) => {
+    const filters: any = {};
+    if (req.query.state) filters.state = req.query.state as string;
+    if (req.query.category) filters.category = req.query.category as string;
+    if (req.query.minRating) filters.minRating = parseFloat(req.query.minRating as string);
+    if (req.query.hasPhone === "true") filters.hasPhone = true;
+    if (req.query.hasEmail === "true") filters.hasEmail = true;
+    if (req.query.unassigned === "true") filters.unassigned = true;
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+    const leads = await storage.getFilteredLeads(filters, limit);
+    res.json(leads);
+  });
+
   app.get("/api/leads/:id", requireAuth, async (req, res) => {
     const lead = await storage.getLeadById(parseInt(req.params.id));
     if (!lead) return res.status(404).json({ message: "Lead not found" });
@@ -286,18 +299,6 @@ export async function registerRoutes(
     }
     const count = await storage.bulkDeleteLeads(ids);
     res.json({ deleted: count });
-  });
-
-  app.get("/api/leads/filtered", requireAdmin, async (req, res) => {
-    const filters: any = {};
-    if (req.query.state) filters.state = req.query.state as string;
-    if (req.query.category) filters.category = req.query.category as string;
-    if (req.query.minRating) filters.minRating = parseFloat(req.query.minRating as string);
-    if (req.query.hasPhone === "true") filters.hasPhone = true;
-    if (req.query.hasEmail === "true") filters.hasEmail = true;
-    if (req.query.unassigned === "true") filters.unassigned = true;
-    const leads = await storage.getFilteredLeads(filters);
-    res.json(leads);
   });
 
   app.post("/api/leads/preview", requireAdmin, upload.single("file"), (req, res) => {
