@@ -77,6 +77,8 @@ The application features a modern full-stack architecture. The **frontend** is b
     *   Unique indexing ensures data integrity, especially for leads.
 
 ## Recent Changes (Feb 2026)
+*   **Lead Archiving System:** Leads reaching terminal states (SPOKE_NOT_INTERESTED, max retries exhausted, SIGNED_UP) are automatically archived. Archived leads are filtered from all active views (Today View, All Leads, My Leads, Assign Batch). New Archived Leads admin page with search, reason filtering, and restore capability.
+*   **Today View Rework:** Simplified from 4 tabs to 2 tabs: "To Call" (NOT_CALLED + retry-ready leads) and "Called" (all non-archived called leads). Retry leads automatically return to "To Call" when their retry date arrives.
 *   **User Management:** Admins can now edit (name, email, role, password) and delete users from the Manage Users page.
 *   **Lead Management:** All Vendor Leads page now supports inline editing, single delete, checkbox multi-select, and bulk delete operations.
 *   **Assign Batch:** Reworked to show a filterable lead list (state, category, rating, phone, email, unassigned) with checkbox selection for batch assignment to callers. Added caller queue alerts showing callers with uncalled leads remaining, with inline warning when selecting such a caller.
@@ -85,7 +87,7 @@ The application features a modern full-stack architecture. The **frontend** is b
 *   **AI Prompts:** Vendor and buyer pipelines now have separate dedicated prompt templates shown side by side, with create button for missing pipelines.
 *   **Settings Hub:** Added clarifying descriptions for retry settings, explaining retry behavior, delay spacing, and business hours warning.
 *   **Lead Detail:** Added previous/next navigation buttons to move between leads without returning to the list.
-*   **Schema:** Added `name` (text) and `sequence` (integer) columns to `email_templates` table.
+*   **Schema:** Added `name` (text) and `sequence` (integer) columns to `email_templates` table. Added `isArchived`, `archivedAt`, `archiveReason` columns to leads table.
 
 ## External Dependencies
 *   **SendGrid:** For sending outbound emails and tracking email events via webhooks.

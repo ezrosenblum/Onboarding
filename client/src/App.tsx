@@ -24,6 +24,7 @@ import CallerDetailPage from "@/pages/admin/caller-detail";
 import SettingsHubPage from "@/pages/admin/settings-hub";
 import CallReviewPage from "@/pages/admin/call-review";
 import EmailInboxPage from "@/pages/email-inbox";
+import ArchivedLeadsPage from "@/pages/admin/archived-leads";
 
 function AdminRoute({ component: Component }: { component: () => JSX.Element }) {
   const { user } = useAuth();
@@ -60,6 +61,7 @@ function AppRouter() {
       <Route path="/admin/caller/:userId">{() => <AdminRoute component={CallerDetailPage} />}</Route>
       <Route path="/admin/settings">{() => <AdminRoute component={SettingsHubPage} />}</Route>
       <Route path="/admin/call-review">{() => <AdminRoute component={CallReviewPage} />}</Route>
+      <Route path="/admin/archived">{() => <AdminRoute component={ArchivedLeadsPage} />}</Route>
       <Route component={NotFound} />
     </Switch>
   );

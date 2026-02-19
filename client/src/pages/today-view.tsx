@@ -7,23 +7,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { CallModal } from "@/components/call-modal";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
   Phone, Building2, MapPin, PhoneCall, RotateCcw, CheckCircle2,
-  Target, Clock, Zap, AlertTriangle, Activity, Mail, Download, Loader2, TrendingUp
+  Target, Clock, Zap, Mail, Download, Loader2, TrendingUp
 } from "lucide-react";
 
 interface TodayData {
-  newLeads: Lead[];
-  retryLeads: Lead[];
-  activeLeads: Lead[];
-  completedLeads: Lead[];
+  toCallLeads: Lead[];
+  calledLeads: Lead[];
   counters: {
-    totalAssigned: number;
+    toCall: number;
+    called: number;
     retryEligible: number;
     attemptsMadeToday: number;
     emailsSentToday: number;
@@ -63,17 +61,13 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
 }
 
 export default function TodayViewPage() {
-  const [showUnreachable, setShowUnreachable] = useState(false);
   const queryClient = useQueryClient();
 
-  const queryKey = ["/api/leads/today", showUnreachable ? "unreachable" : "reachable"];
+  const queryKey = ["/api/leads/today"];
   const { data, isLoading } = useQuery<TodayData>({
     queryKey,
     queryFn: async () => {
-      const url = showUnreachable
-        ? "/api/leads/today?includeUnreachable=true"
-        : "/api/leads/today";
-      const res = await fetch(url, { credentials: "include" });
+      const res = await fetch("/api/leads/today", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch");
       return res.json();
     },
@@ -105,21 +99,11 @@ export default function TodayViewPage() {
     },
   });
 
-  const newLeads = data?.newLeads ?? [];
-  const retryLeads = data?.retryLeads ?? [];
-  const activeLeads = data?.activeLeads ?? [];
-  const completedLeads = data?.completedLeads ?? [];
+  const toCallLeads = data?.toCallLeads ?? [];
+  const calledLeads = data?.calledLeads ?? [];
   const counters = data?.counters;
   const weeklyStats = data?.weeklyStats;
   const target = data?.dailyCallTarget;
-
-  const suggestedNew = target ? Math.round(target * 0.8) : null;
-  const suggestedRetry = target ? Math.round(target * 0.2) : null;
-
-  const handleUnreachableToggle = (checked: boolean) => {
-    setShowUnreachable(checked);
-    queryClient.invalidateQueries({ queryKey: ["/api/leads/today"] });
-  };
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
@@ -143,8 +127,8 @@ export default function TodayViewPage() {
                   <Target className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold" data-testid="text-total-assigned">{counters.totalAssigned}</p>
-                  <p className="text-xs text-muted-foreground">Assigned</p>
+                  <p className="text-2xl font-bold" data-testid="text-to-call">{counters.toCall}</p>
+                  <p className="text-xs text-muted-foreground">To Call</p>
                 </div>
               </div>
             </CardContent>
@@ -179,11 +163,11 @@ export default function TodayViewPage() {
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted shrink-0">
-                  <Mail className="h-5 w-5 text-muted-foreground" />
+                  <CheckCircle2 className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold" data-testid="text-emails-today">{counters.emailsSentToday}</p>
-                  <p className="text-xs text-muted-foreground">Emails Today</p>
+                  <p className="text-2xl font-bold" data-testid="text-called">{counters.called}</p>
+                  <p className="text-xs text-muted-foreground">Called</p>
                 </div>
               </div>
             </CardContent>
@@ -192,15 +176,11 @@ export default function TodayViewPage() {
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-md bg-muted shrink-0">
-                  <TrendingUp className="h-5 w-5 text-muted-foreground" />
+                  <Mail className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold" data-testid="text-conversion-rate">
-                    {counters.attemptsMadeToday > 0
-                      ? ((counters.emailsSentToday / counters.attemptsMadeToday) * 100).toFixed(1)
-                      : "0.0"}%
-                  </p>
-                  <p className="text-xs text-muted-foreground">Call→Email %</p>
+                  <p className="text-2xl font-bold" data-testid="text-emails-today">{counters.emailsSentToday}</p>
+                  <p className="text-xs text-muted-foreground">Emails Today</p>
                 </div>
               </div>
             </CardContent>
@@ -238,17 +218,13 @@ export default function TodayViewPage() {
         </Card>
       )}
 
-      {target && suggestedNew !== null && suggestedRetry !== null && (
+      {target && (
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-2 flex-wrap">
               <Zap className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">
                 Daily target: <span className="font-medium text-foreground">{target} calls</span>
-              </span>
-              <span className="text-sm text-muted-foreground mx-1">|</span>
-              <span className="text-sm text-muted-foreground">
-                Suggested: <span className="font-medium text-foreground">{suggestedNew} new</span>, <span className="font-medium text-foreground">{suggestedRetry} retry</span> (80/20)
               </span>
             </div>
           </CardContent>
@@ -318,49 +294,22 @@ export default function TodayViewPage() {
         </Card>
       )}
 
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="show-unreachable"
-          checked={showUnreachable}
-          onCheckedChange={(checked) => handleUnreachableToggle(checked === true)}
-          data-testid="checkbox-show-unreachable"
-        />
-        <Label htmlFor="show-unreachable" className="text-sm text-muted-foreground cursor-pointer flex items-center gap-1.5">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          Show Unreachable
-        </Label>
-      </div>
-
-      <Tabs defaultValue="new">
+      <Tabs defaultValue="to-call">
         <TabsList>
-          <TabsTrigger value="new" data-testid="tab-new">
-            New ({newLeads.length})
+          <TabsTrigger value="to-call" data-testid="tab-to-call">
+            To Call ({toCallLeads.length})
           </TabsTrigger>
-          <TabsTrigger value="retry" data-testid="tab-retry">
-            Retry ({retryLeads.length})
-          </TabsTrigger>
-          <TabsTrigger value="active" data-testid="tab-active">
-            Active / Pending ({activeLeads.length})
-          </TabsTrigger>
-          <TabsTrigger value="completed" data-testid="tab-completed">
-            Completed ({completedLeads.length})
+          <TabsTrigger value="called" data-testid="tab-called">
+            Called ({calledLeads.length})
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="new" className="mt-4">
-          <LeadList leads={newLeads} onCallClick={setCallLead} emptyMessage="No new leads to call." isLoading={isLoading} />
+        <TabsContent value="to-call" className="mt-4">
+          <LeadList leads={toCallLeads} onCallClick={setCallLead} emptyMessage="No leads to call right now. Pull more leads or check back later." isLoading={isLoading} showRetryInfo />
         </TabsContent>
 
-        <TabsContent value="retry" className="mt-4">
-          <LeadList leads={retryLeads} onCallClick={setCallLead} emptyMessage="No leads eligible for retry right now." isLoading={isLoading} showRetryInfo />
-        </TabsContent>
-
-        <TabsContent value="active" className="mt-4">
-          <LeadList leads={activeLeads} onCallClick={setCallLead} emptyMessage="No active leads right now." isLoading={isLoading} />
-        </TabsContent>
-
-        <TabsContent value="completed" className="mt-4">
-          <LeadList leads={completedLeads} onCallClick={null} emptyMessage="No completed signups yet." isLoading={isLoading} />
+        <TabsContent value="called" className="mt-4">
+          <LeadList leads={calledLeads} onCallClick={setCallLead} emptyMessage="No called leads yet. Start calling from the To Call tab." isLoading={isLoading} />
         </TabsContent>
       </Tabs>
 
@@ -440,7 +389,7 @@ function LeadList({ leads, onCallClick, emptyMessage, isLoading, showRetryInfo }
                 {showRetryInfo && lead.retryNextEligibleAt && (
                   new Date(lead.retryNextEligibleAt) <= new Date() ? (
                     <Badge variant="outline" className="text-xs">
-                      <Clock className="h-3 w-3 mr-1" />Eligible Now
+                      <Clock className="h-3 w-3 mr-1" />Retry Now
                     </Badge>
                   ) : (
                     <Badge variant="secondary" className="text-xs">

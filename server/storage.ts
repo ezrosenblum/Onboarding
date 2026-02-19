@@ -63,9 +63,11 @@ export interface IStorage {
   updateLead(id: number, data: Partial<Lead>): Promise<Lead | undefined>;
   assignLeads(callerId: number, count: number, filters?: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean }): Promise<number>;
 
+  getArchivedLeads(pipelineType?: string): Promise<Lead[]>;
   getNewLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
   getRetryLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
   getRetryEligibleCount(userId: number): Promise<number>;
+  getCalledLeads(userId: number): Promise<Lead[]>;
   getActiveLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
   getCompletedLeads(userId: number): Promise<Lead[]>;
 
@@ -242,15 +244,28 @@ export class DatabaseStorage implements IStorage {
   async getAllLeads(pipelineType?: string): Promise<Lead[]> {
     if (pipelineType) {
       return db.select().from(leads)
-        .where(eq(leads.pipelineType, pipelineType as any))
+        .where(and(eq(leads.pipelineType, pipelineType as any), eq(leads.isArchived, false)))
         .orderBy(desc(leads.createdAt));
     }
-    return db.select().from(leads).orderBy(desc(leads.createdAt));
+    return db.select().from(leads)
+      .where(eq(leads.isArchived, false))
+      .orderBy(desc(leads.createdAt));
+  }
+
+  async getArchivedLeads(pipelineType?: string): Promise<Lead[]> {
+    if (pipelineType) {
+      return db.select().from(leads)
+        .where(and(eq(leads.pipelineType, pipelineType as any), eq(leads.isArchived, true)))
+        .orderBy(desc(leads.archivedAt));
+    }
+    return db.select().from(leads)
+      .where(eq(leads.isArchived, true))
+      .orderBy(desc(leads.archivedAt));
   }
 
   async getLeadsByUserId(userId: number): Promise<Lead[]> {
     return db.select().from(leads)
-      .where(eq(leads.assignedToUserId, userId))
+      .where(and(eq(leads.assignedToUserId, userId), eq(leads.isArchived, false)))
       .orderBy(desc(leads.createdAt));
   }
 
@@ -302,7 +317,7 @@ export class DatabaseStorage implements IStorage {
     const conditions = [
       eq(leads.assignedToUserId, userId),
       eq(leads.statusCall, "NOT_CALLED"),
-      sql`${leads.statusSignup} != 'SIGNED_UP'`,
+      eq(leads.isArchived, false),
     ];
     if (!includeUnreachable) conditions.push(eq(leads.unreachable, false));
     return db.select().from(leads)
@@ -311,11 +326,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getRetryLeads(userId: number, includeUnreachable = false): Promise<Lead[]> {
+    const now = new Date();
     const conditions = [
       eq(leads.assignedToUserId, userId),
       sql`${leads.statusCall} != 'NOT_CALLED'`,
-      sql`${leads.statusSignup} != 'SIGNED_UP'`,
+      eq(leads.isArchived, false),
       sql`${leads.retryNextEligibleAt} IS NOT NULL`,
+      lte(leads.retryNextEligibleAt, now),
     ];
     if (!includeUnreachable) conditions.push(eq(leads.unreachable, false));
     return db.select().from(leads)
@@ -329,11 +346,22 @@ export class DatabaseStorage implements IStorage {
       .where(and(
         eq(leads.assignedToUserId, userId),
         eq(leads.unreachable, false),
-        sql`${leads.statusSignup} != 'SIGNED_UP'`,
+        eq(leads.isArchived, false),
         sql`${leads.retryNextEligibleAt} IS NOT NULL`,
         lte(leads.retryNextEligibleAt, now)
       ));
     return Number(result[0].count);
+  }
+
+  async getCalledLeads(userId: number): Promise<Lead[]> {
+    const conditions = [
+      eq(leads.assignedToUserId, userId),
+      sql`${leads.statusCall} != 'NOT_CALLED'`,
+      eq(leads.isArchived, false),
+    ];
+    return db.select().from(leads)
+      .where(and(...conditions))
+      .orderBy(desc(leads.createdAt));
   }
 
   async getActiveLeads(userId: number, includeUnreachable = false): Promise<Lead[]> {
@@ -342,6 +370,7 @@ export class DatabaseStorage implements IStorage {
       sql`${leads.statusSignup} != 'SIGNED_UP'`,
       sql`${leads.statusCall} IN ('SPOKE_SEND_INFO', 'SPOKE_FOLLOW_UP', 'SPOKE_INTERESTED', 'SPOKE_NOT_INTERESTED')`,
       sql`${leads.retryNextEligibleAt} IS NULL`,
+      eq(leads.isArchived, false),
     ];
     if (!includeUnreachable) conditions.push(eq(leads.unreachable, false));
     return db.select().from(leads)
@@ -959,7 +988,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getFilteredLeads(filters: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean; unassigned?: boolean }, limit?: number): Promise<Lead[]> {
-    const conditions: any[] = [eq(leads.pipelineType, "vendor")];
+    const conditions: any[] = [eq(leads.pipelineType, "vendor"), eq(leads.isArchived, false)];
     if (filters.unassigned) conditions.push(sql`${leads.assignedToUserId} IS NULL`);
     if (filters.state) conditions.push(sql`LOWER(${leads.state}) = LOWER(${filters.state})`);
     if (filters.category) conditions.push(sql`LOWER(${leads.categoryKeyword}) LIKE LOWER(${'%' + filters.category + '%'})`);

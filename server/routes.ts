@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 import { storage } from "./storage";
 import { db } from "./db";
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
-import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, emailTemplateTypeEnum, callLogs, leads, inboundEmails } from "@shared/schema";
+import { insertUserSchema, loginSchema, callOutcomeEnum, retryOutcomes, terminalOutcomes, emailTemplateTypeEnum, callLogs, leads, inboundEmails } from "@shared/schema";
 import type { InsertLead, CallOutcome, EmailTemplateType } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -208,11 +208,10 @@ export async function registerRoutes(
     const userId = req.user!.id;
     const includeUnreachable = req.query.includeUnreachable === "true";
 
-    const [newLeads, retryLeads, activeLeads, completedLeads, callsToday, allAssigned, retryEligibleCount, emailsToday, weeklyStats] = await Promise.all([
+    const [newLeads, retryLeads, calledLeads, callsToday, allAssigned, retryEligibleCount, emailsToday, weeklyStats] = await Promise.all([
       storage.getNewLeads(userId, includeUnreachable),
       storage.getRetryLeads(userId, includeUnreachable),
-      storage.getActiveLeads(userId, includeUnreachable),
-      storage.getCompletedLeads(userId),
+      storage.getCalledLeads(userId),
       storage.getCallLogsTodayByUserId(userId),
       storage.getLeadsByUserId(userId),
       storage.getRetryEligibleCount(userId),
@@ -220,13 +219,14 @@ export async function registerRoutes(
       storage.getCallerWeeklyStats(userId),
     ]);
 
+    const toCallLeads = [...newLeads, ...retryLeads];
+
     res.json({
-      newLeads,
-      retryLeads,
-      activeLeads,
-      completedLeads,
+      toCallLeads,
+      calledLeads,
       counters: {
-        totalAssigned: allAssigned.length,
+        toCall: toCallLeads.length,
+        called: calledLeads.length,
         retryEligible: retryEligibleCount,
         attemptsMadeToday: callsToday,
         emailsSentToday: emailsToday,
@@ -234,6 +234,19 @@ export async function registerRoutes(
       weeklyStats,
       dailyCallTarget: req.user!.dailyCallTarget || null,
     });
+  });
+
+  app.get("/api/leads/archived", requireAdmin, async (req, res) => {
+    const archived = await storage.getArchivedLeads("vendor");
+    res.json(archived);
+  });
+
+  app.post("/api/leads/:id/restore", requireAdmin, async (req, res) => {
+    const id = parseInt(req.params.id);
+    const lead = await storage.getLeadById(id);
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+    const updated = await storage.updateLead(id, { isArchived: false, archivedAt: null, archiveReason: null });
+    res.json(updated);
   });
 
   app.get("/api/leads/assigned-today", requireAdmin, async (req, res) => {
@@ -470,6 +483,16 @@ export async function registerRoutes(
       }
     } else {
       leadUpdate.retryNextEligibleAt = null;
+    }
+
+    if ((terminalOutcomes as readonly string[]).includes(typedOutcome)) {
+      leadUpdate.isArchived = true;
+      leadUpdate.archivedAt = new Date();
+      leadUpdate.archiveReason = typedOutcome;
+    } else if ((retryOutcomes as readonly string[]).includes(typedOutcome) && newAttemptCount >= maxRetry) {
+      leadUpdate.isArchived = true;
+      leadUpdate.archivedAt = new Date();
+      leadUpdate.archiveReason = "MAX_RETRIES_REACHED";
     }
 
     const log = await db.transaction(async (tx) => {
@@ -980,6 +1003,9 @@ export async function registerRoutes(
           signedUpEmail: email || null,
           signedUpUserId: effectiveUserId,
           signupSource: "webhook",
+          isArchived: true,
+          archivedAt: new Date(),
+          archiveReason: "SIGNED_UP",
         }
       );
     } catch (err: any) {
@@ -1018,6 +1044,9 @@ export async function registerRoutes(
       signedUpEmail,
       signedUpUserId: null,
       signupSource: "admin_manual",
+      isArchived: true,
+      archivedAt: new Date(),
+      archiveReason: "SIGNED_UP",
     });
 
     res.json({ message: "Lead marked as signed up", leadId: lead.id });
@@ -1151,13 +1180,25 @@ export async function registerRoutes(
         if (lead.attemptCount + 1 >= maxRetries) {
           leadUpdate.unreachable = true;
           leadUpdate.retryNextEligibleAt = null;
+          leadUpdate.isArchived = true;
+          leadUpdate.archivedAt = new Date();
+          leadUpdate.archiveReason = "MAX_RETRIES_REACHED";
         } else {
           leadUpdate.retryNextEligibleAt = addBusinessDays(new Date(), retryDelay);
         }
       } else if (outcome === "SPOKE_NOT_INTERESTED") {
         leadUpdate.unreachable = true;
+        leadUpdate.isArchived = true;
+        leadUpdate.archivedAt = new Date();
+        leadUpdate.archiveReason = "SPOKE_NOT_INTERESTED";
       } else {
         leadUpdate.retryNextEligibleAt = null;
+      }
+
+      if (terminalOutcomes.includes(outcome as CallOutcome) && !leadUpdate.isArchived) {
+        leadUpdate.isArchived = true;
+        leadUpdate.archivedAt = new Date();
+        leadUpdate.archiveReason = outcome;
       }
 
       await storage.updateLead(leadId, leadUpdate);

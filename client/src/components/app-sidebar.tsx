@@ -1,4 +1,4 @@
-import { Upload, Users, ClipboardList, LayoutDashboard, UserCheck, PhoneCall, List, Mail, Inbox, Sparkles, BarChart3, Activity, Settings, Headphones } from "lucide-react";
+import { Upload, Users, ClipboardList, LayoutDashboard, UserCheck, PhoneCall, List, Mail, Inbox, Sparkles, BarChart3, Activity, Settings, Headphones, Archive } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
 import {
@@ -29,6 +29,7 @@ const adminItems = [
   { title: "Signup Metrics", url: "/admin/signup-metrics", icon: BarChart3 },
   { title: "Call Review", url: "/admin/call-review", icon: Headphones },
   { title: "Settings", url: "/admin/settings", icon: Settings },
+  { title: "Archived Leads", url: "/admin/archived", icon: Archive },
   { title: "Manage Users", url: "/admin/users", icon: Users },
 ];
 

@@ -29,6 +29,8 @@ export type CallOutcome = (typeof callOutcomeEnum)[number];
 
 export const retryOutcomes: readonly CallOutcome[] = ["NO_ANSWER", "VOICEMAIL", "GATEKEEPER", "CALL_DROPPED"] as const;
 
+export const terminalOutcomes: readonly CallOutcome[] = ["SPOKE_NOT_INTERESTED"] as const;
+
 export const callStatusEnum = ["NOT_CALLED", ...callOutcomeEnum] as const;
 export type CallStatus = (typeof callStatusEnum)[number];
 
@@ -104,6 +106,9 @@ export const leads = pgTable("leads", {
   signupSource: text("signup_source"),
   leadScore: integer("lead_score").default(0),
   leadScoreUpdatedAt: timestamp("lead_score_updated_at"),
+  isArchived: boolean("is_archived").notNull().default(false),
+  archivedAt: timestamp("archived_at"),
+  archiveReason: text("archive_reason"),
   assignedToUserId: integer("assigned_to_user_id").references(() => users.id),
   assignedAt: timestamp("assigned_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
