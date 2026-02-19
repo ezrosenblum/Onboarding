@@ -3,8 +3,40 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Activity, Phone, Mail, MousePointerClick, Eye, UserCheck, TrendingUp, ArrowRight, AlertTriangle, Clock, MapPin, Tag } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Activity, Phone, Mail, MousePointerClick, Eye, UserCheck, TrendingUp, ArrowRight, AlertTriangle, Clock, MapPin, Tag, Info, ChevronDown, ChevronUp, BarChart3 } from "lucide-react";
 import { useState } from "react";
+import { Link } from "wouter";
+
+interface AlertItem {
+  type: string;
+  callerId: number;
+  callerName: string;
+  message: string;
+  severity: 'warning' | 'info';
+}
+
+interface LeakLead {
+  id: number;
+  companyName: string;
+  state: string;
+  assignedToUserId: number | null;
+  attemptCount: number;
+}
+
+interface LeakReport {
+  clickedNotSignedUp: LeakLead[];
+  spokeNoEmail: LeakLead[];
+  retriedNeverMoved: LeakLead[];
+  assignedUntouched: LeakLead[];
+}
+
+interface CategoryStateAnalysis {
+  byState: { state: string; calls: number; emails: number; signups: number; conversionPct: number }[];
+  byCategory: { category: string; calls: number; emails: number; signups: number; conversionPct: number }[];
+  byRatingBand: { band: string; calls: number; signups: number; conversionPct: number }[];
+  bySourceFile: { sourceFile: string; totalLeads: number; calls: number; signups: number; conversionPct: number }[];
+}
 
 interface CallerPerformance {
   userId: number;
@@ -87,6 +119,25 @@ export default function PerformanceDashboardPage() {
   const { data: metrics, isLoading } = useQuery<PerformanceMetrics>({
     queryKey: [`/api/admin/metrics/performance?range=${range}`],
   });
+
+  const { data: alerts } = useQuery<AlertItem[]>({
+    queryKey: ["/api/admin/alerts"],
+  });
+
+  const { data: leakReport } = useQuery<LeakReport>({
+    queryKey: ["/api/admin/leak-report"],
+  });
+
+  const { data: categoryState } = useQuery<CategoryStateAnalysis>({
+    queryKey: ["/api/admin/analytics/category-state", range],
+    queryFn: async () => {
+      const res = await fetch(`/api/admin/analytics/category-state?range=${range}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch");
+      return res.json();
+    },
+  });
+
+  const [expandedLeakSections, setExpandedLeakSections] = useState<Record<string, boolean>>({});
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -306,8 +357,286 @@ export default function PerformanceDashboardPage() {
               )}
             </CardContent>
           </Card>
+
+          <Card data-testid="card-alerts">
+            <CardHeader className="pb-3">
+              <h3 className="font-semibold flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" /> Alerts
+              </h3>
+            </CardHeader>
+            <CardContent>
+              {!alerts || alerts.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-alerts">No alerts</p>
+              ) : (
+                <div className="space-y-2">
+                  {alerts.map((alert, idx) => (
+                    <div
+                      key={`${alert.type}-${alert.callerId}-${idx}`}
+                      className={`flex items-center gap-3 p-3 rounded-md ${
+                        alert.severity === "warning"
+                          ? "bg-yellow-500/10 dark:bg-yellow-500/10"
+                          : "bg-blue-500/10 dark:bg-blue-500/10"
+                      }`}
+                      data-testid={`row-alert-${idx}`}
+                    >
+                      {alert.severity === "warning" ? (
+                        <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400 shrink-0" />
+                      ) : (
+                        <Info className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                      )}
+                      <Badge variant="outline" data-testid={`badge-alert-caller-${idx}`}>{alert.callerName}</Badge>
+                      <span className="text-sm" data-testid={`text-alert-message-${idx}`}>{alert.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card data-testid="card-leak-report">
+            <CardHeader className="pb-3">
+              <h3 className="font-semibold flex items-center gap-2">
+                <TrendingUp className="h-4 w-4" /> Funnel Leak Report
+              </h3>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {leakReport ? (
+                <>
+                  <LeakSection
+                    title="Clicked but Not Signed Up"
+                    sectionKey="clickedNotSignedUp"
+                    leads={leakReport.clickedNotSignedUp}
+                    expanded={expandedLeakSections}
+                    toggle={setExpandedLeakSections}
+                  />
+                  <LeakSection
+                    title="Spoke but No Email Sent"
+                    sectionKey="spokeNoEmail"
+                    leads={leakReport.spokeNoEmail}
+                    expanded={expandedLeakSections}
+                    toggle={setExpandedLeakSections}
+                  />
+                  <LeakSection
+                    title="Retried 3+ Times, Never Moved"
+                    sectionKey="retriedNeverMoved"
+                    leads={leakReport.retriedNeverMoved}
+                    expanded={expandedLeakSections}
+                    toggle={setExpandedLeakSections}
+                  />
+                  <LeakSection
+                    title="Assigned but Untouched (3+ Days)"
+                    sectionKey="assignedUntouched"
+                    leads={leakReport.assignedUntouched}
+                    expanded={expandedLeakSections}
+                    toggle={setExpandedLeakSections}
+                  />
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-leak-data">No leak data available</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card data-testid="card-conversion-analysis">
+            <CardHeader className="pb-3">
+              <h3 className="font-semibold flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" /> Conversion Analysis
+              </h3>
+            </CardHeader>
+            <CardContent>
+              {categoryState ? (
+                <Tabs defaultValue="byState">
+                  <TabsList className="mb-4 flex-wrap">
+                    <TabsTrigger value="byState" data-testid="tab-by-state">By State</TabsTrigger>
+                    <TabsTrigger value="byCategory" data-testid="tab-by-category">By Category</TabsTrigger>
+                    <TabsTrigger value="byRatingBand" data-testid="tab-by-rating">By Rating Band</TabsTrigger>
+                    <TabsTrigger value="bySourceFile" data-testid="tab-by-source">By Source File</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="byState">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left">
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground">State</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Calls</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Emails</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Signups</th>
+                            <th className="pb-2 font-medium text-muted-foreground text-right">Conversion %</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...categoryState.byState]
+                            .sort((a, b) => b.conversionPct - a.conversionPct)
+                            .slice(0, 15)
+                            .map((row) => (
+                              <tr key={row.state} className="border-b last:border-b-0" data-testid={`row-state-${row.state}`}>
+                                <td className="py-2 pr-3 font-medium">{row.state}</td>
+                                <td className="py-2 pr-3 text-right">{row.calls}</td>
+                                <td className="py-2 pr-3 text-right">{row.emails}</td>
+                                <td className="py-2 pr-3 text-right">{row.signups}</td>
+                                <td className="py-2 text-right">{row.conversionPct}%</td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="byCategory">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left">
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground">Category</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Calls</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Emails</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Signups</th>
+                            <th className="pb-2 font-medium text-muted-foreground text-right">Conversion %</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...categoryState.byCategory]
+                            .sort((a, b) => b.conversionPct - a.conversionPct)
+                            .slice(0, 15)
+                            .map((row) => (
+                              <tr key={row.category} className="border-b last:border-b-0" data-testid={`row-category-${row.category}`}>
+                                <td className="py-2 pr-3 font-medium">{row.category}</td>
+                                <td className="py-2 pr-3 text-right">{row.calls}</td>
+                                <td className="py-2 pr-3 text-right">{row.emails}</td>
+                                <td className="py-2 pr-3 text-right">{row.signups}</td>
+                                <td className="py-2 text-right">{row.conversionPct}%</td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="byRatingBand">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left">
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground">Band</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Calls</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Signups</th>
+                            <th className="pb-2 font-medium text-muted-foreground text-right">Conversion %</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...categoryState.byRatingBand]
+                            .sort((a, b) => b.conversionPct - a.conversionPct)
+                            .slice(0, 15)
+                            .map((row) => (
+                              <tr key={row.band} className="border-b last:border-b-0" data-testid={`row-band-${row.band}`}>
+                                <td className="py-2 pr-3 font-medium">{row.band}</td>
+                                <td className="py-2 pr-3 text-right">{row.calls}</td>
+                                <td className="py-2 pr-3 text-right">{row.signups}</td>
+                                <td className="py-2 text-right">{row.conversionPct}%</td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="bySourceFile">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left">
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground">Source File</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Total Leads</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Calls</th>
+                            <th className="pb-2 pr-3 font-medium text-muted-foreground text-right">Signups</th>
+                            <th className="pb-2 font-medium text-muted-foreground text-right">Conversion %</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[...categoryState.bySourceFile]
+                            .sort((a, b) => b.conversionPct - a.conversionPct)
+                            .slice(0, 15)
+                            .map((row) => (
+                              <tr key={row.sourceFile} className="border-b last:border-b-0" data-testid={`row-source-${row.sourceFile}`}>
+                                <td className="py-2 pr-3 font-medium">{row.sourceFile}</td>
+                                <td className="py-2 pr-3 text-right">{row.totalLeads}</td>
+                                <td className="py-2 pr-3 text-right">{row.calls}</td>
+                                <td className="py-2 pr-3 text-right">{row.signups}</td>
+                                <td className="py-2 text-right">{row.conversionPct}%</td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4" data-testid="text-no-analysis-data">No analysis data available</p>
+              )}
+            </CardContent>
+          </Card>
         </>
       ) : null}
+    </div>
+  );
+}
+
+function LeakSection({
+  title,
+  sectionKey,
+  leads,
+  expanded,
+  toggle,
+}: {
+  title: string;
+  sectionKey: string;
+  leads: LeakLead[];
+  expanded: Record<string, boolean>;
+  toggle: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+}) {
+  const isOpen = expanded[sectionKey] ?? false;
+  return (
+    <div className="border rounded-md" data-testid={`leak-section-${sectionKey}`}>
+      <button
+        className="w-full flex items-center justify-between gap-2 p-3 text-left"
+        onClick={() => toggle((prev) => ({ ...prev, [sectionKey]: !isOpen }))}
+        data-testid={`button-toggle-leak-${sectionKey}`}
+      >
+        <span className="text-sm font-medium">{title}</span>
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary">{leads.length}</Badge>
+          {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </div>
+      </button>
+      {isOpen && leads.length > 0 && (
+        <div className="border-t px-3 pb-3">
+          <div className="space-y-1 pt-2">
+            {leads.map((lead) => (
+              <Link
+                key={lead.id}
+                href={`/leads/${lead.id}`}
+                className="flex items-center justify-between gap-2 p-2 rounded-md hover-elevate text-sm"
+                data-testid={`link-leak-lead-${lead.id}`}
+              >
+                <span className="font-medium">{lead.companyName}</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {lead.state && <Badge variant="outline">{lead.state}</Badge>}
+                  {lead.assignedToUserId && (
+                    <span className="text-xs text-muted-foreground">Caller #{lead.assignedToUserId}</span>
+                  )}
+                  <span className="text-xs text-muted-foreground">Attempts: {lead.attemptCount}</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+      {isOpen && leads.length === 0 && (
+        <div className="border-t px-3 py-3">
+          <p className="text-sm text-muted-foreground text-center">None</p>
+        </div>
+      )}
     </div>
   );
 }

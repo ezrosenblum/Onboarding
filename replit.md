@@ -53,9 +53,19 @@ The application features a modern full-stack architecture. The **frontend** is b
 
 6.  **Admin & Reporting:**
     *   **Admin Dashboard:** Provides tools for lead assignment, user management, and system settings.
-    *   **Performance Dashboard:** Offers detailed metrics on caller activity (calls, emails), email engagement rates, and conversion funnels (Calls → Signup%, Click → Signup%). Includes breakdowns by caller, state, category, and call timing analysis.
+    *   **Performance Dashboard:** Offers detailed metrics on caller activity (calls, emails), email engagement rates, and conversion funnels (Calls → Signup%, Click → Signup%). Includes breakdowns by caller, state, category, and call timing analysis. Also includes caller alerts panel, funnel leak report, and conversion analysis by state/category/rating/source.
     *   **Signup Metrics Dashboard:** Tracks total signups and per-caller signup performance over selectable date ranges.
     *   **AI Prompt & Email Template Management:** Dedicated admin pages for managing AI prompts and email templates.
+    *   **Call Review Queue:** Admin page for reviewing calls with quality tagging and coaching notes.
+    *   **Caller Detail Drilldown:** Per-caller metrics, outcome distribution, and daily trends.
+    *   **Settings Hub:** Unified admin page for retry settings, call settings, webhook status, pipeline health, lead scoring weights, and CSV data export.
+
+8.  **Scaling & Optimization (Stage 8):**
+    *   **Lead Scoring Engine:** Configurable scoring (0-100) based on weighted factors (email, website, rating, reviews, phone, email clicked). Weights managed in admin settings, scores auto-calculated and stored on leads. NEW tab sorts by score descending.
+    *   **Funnel Leak Detection:** Identifies leads stuck at various pipeline stages (clicked but not signed up, spoke but no email, retried 3+ times without progress, assigned but untouched 3+ days).
+    *   **Caller Performance Alerts:** Automated alert generation for no activity, low conversion, high unreachable, and high no-answer rates.
+    *   **Conversion Analysis:** Breakdown by state, category, rating band, and source file with conversion percentages.
+    *   **CSV Data Export:** Export leads, call logs, email logs, and signup events as CSV files.
 
 7.  **Database & Schema:**
     *   PostgreSQL database managed with Drizzle ORM.

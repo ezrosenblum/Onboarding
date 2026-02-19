@@ -117,6 +117,27 @@ export interface IStorage {
   getCallEventsByCallLogId(callLogId: number): Promise<CallEvent[]>;
   getPendingTranscriptions(): Promise<CallLog[]>;
 
+  getLeadScoreWeights(): Promise<Record<string, number>>;
+  getLeakReport(): Promise<{
+    clickedNotSignedUp: Lead[];
+    spokeNoEmail: Lead[];
+    retriedNeverMoved: Lead[];
+    assignedUntouched: Lead[];
+  }>;
+  getCallerAlerts(): Promise<Array<{
+    type: 'low_conversion' | 'high_unreachable' | 'no_activity' | 'high_no_answer';
+    callerId: number;
+    callerName: string;
+    message: string;
+    severity: 'warning' | 'info';
+  }>>;
+  getCategoryStateAnalysis(range: "week" | "month" | "all"): Promise<{
+    byState: { state: string; calls: number; emails: number; signups: number; conversionPct: number }[];
+    byCategory: { category: string; calls: number; emails: number; signups: number; conversionPct: number }[];
+    byRatingBand: { band: string; calls: number; signups: number; conversionPct: number }[];
+    bySourceFile: { sourceFile: string; totalLeads: number; calls: number; signups: number; conversionPct: number }[];
+  }>;
+
   getAllSettings(): Promise<Record<string, string>>;
   getPipelineHealth(): Promise<{
     totalUncontacted: number;
@@ -269,7 +290,7 @@ export class DatabaseStorage implements IStorage {
     if (!includeUnreachable) conditions.push(eq(leads.unreachable, false));
     return db.select().from(leads)
       .where(and(...conditions))
-      .orderBy(asc(leads.createdAt));
+      .orderBy(desc(leads.leadScore), asc(leads.createdAt));
   }
 
   async getRetryLeads(userId: number, includeUnreachable = false): Promise<Lead[]> {
@@ -1153,6 +1174,347 @@ export class DatabaseStorage implements IStorage {
       },
       dailyTrend,
     };
+  }
+  async getLeadScoreWeights(): Promise<Record<string, number>> {
+    const defaults: Record<string, number> = {
+      score_weight_email: 20,
+      score_weight_website: 15,
+      score_weight_rating: 20,
+      score_weight_reviews: 15,
+      score_weight_phone: 10,
+      score_weight_clicked: 20,
+    };
+    const rows = await db.select().from(systemSettings)
+      .where(sql`${systemSettings.key} LIKE 'score_weight_%'`);
+    for (const row of rows) {
+      defaults[row.key] = parseInt(row.value) || defaults[row.key] || 0;
+    }
+    return defaults;
+  }
+
+  async getLeakReport(): Promise<{
+    clickedNotSignedUp: Lead[];
+    spokeNoEmail: Lead[];
+    retriedNeverMoved: Lead[];
+    assignedUntouched: Lead[];
+  }> {
+    const now = new Date();
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+
+    const [clickedNotSignedUp, spokeNoEmail, retriedNeverMoved, assignedUntouched] = await Promise.all([
+      db.select().from(leads)
+        .where(and(
+          eq(leads.statusEmail, "CLICKED"),
+          sql`${leads.statusSignup} != 'SIGNED_UP'`
+        ))
+        .orderBy(desc(leads.emailLastSentAt))
+        .limit(50),
+      db.select().from(leads)
+        .where(and(
+          sql`${leads.statusCall} IN ('SPOKE_SEND_INFO', 'SPOKE_FOLLOW_UP', 'SPOKE_INTERESTED')`,
+          eq(leads.statusEmail, "NOT_SENT")
+        ))
+        .orderBy(desc(leads.createdAt))
+        .limit(50),
+      db.select().from(leads)
+        .where(and(
+          gte(leads.attemptCount, 3),
+          sql`${leads.statusCall} IN ('NOT_CALLED', 'NO_ANSWER', 'VOICEMAIL', 'GATEKEEPER', 'CALL_DROPPED')`
+        ))
+        .orderBy(desc(leads.attemptCount))
+        .limit(50),
+      db.select().from(leads)
+        .where(and(
+          sql`${leads.assignedToUserId} IS NOT NULL`,
+          eq(leads.statusCall, "NOT_CALLED"),
+          lte(leads.assignedAt, threeDaysAgo)
+        ))
+        .orderBy(asc(leads.assignedAt))
+        .limit(50),
+    ]);
+
+    return { clickedNotSignedUp, spokeNoEmail, retriedNeverMoved, assignedUntouched };
+  }
+
+  async getCallerAlerts(): Promise<Array<{
+    type: 'low_conversion' | 'high_unreachable' | 'no_activity' | 'high_no_answer';
+    callerId: number;
+    callerName: string;
+    message: string;
+    severity: 'warning' | 'info';
+  }>> {
+    const alerts: Array<{
+      type: 'low_conversion' | 'high_unreachable' | 'no_activity' | 'high_no_answer';
+      callerId: number;
+      callerName: string;
+      message: string;
+      severity: 'warning' | 'info';
+    }> = [];
+
+    const allCallers = await db.select().from(users)
+      .where(sql`${users.role} IN ('vendor_caller', 'buyer_caller')`);
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const currentHour = now.getHours();
+
+    for (const caller of allCallers) {
+      const [callsTodayR] = await db.select({ count: sql<number>`count(*)` }).from(callLogs)
+        .where(and(eq(callLogs.userId, caller.id), gte(callLogs.calledAt, todayStart)));
+      const callsToday = Number(callsTodayR.count);
+
+      if (callsToday === 0 && currentHour >= 11) {
+        alerts.push({
+          type: 'no_activity',
+          callerId: caller.id,
+          callerName: caller.name,
+          message: `${caller.name} has made 0 calls today`,
+          severity: 'warning',
+        });
+      }
+
+      const [calls7dR] = await db.select({ count: sql<number>`count(*)` }).from(callLogs)
+        .where(and(eq(callLogs.userId, caller.id), gte(callLogs.calledAt, sevenDaysAgo)));
+      const calls7d = Number(calls7dR.count);
+
+      if (calls7d >= 10) {
+        const [emails7dR] = await db.select({ count: sql<number>`count(*)` }).from(emailLogs)
+          .where(and(eq(emailLogs.userId, caller.id), gte(emailLogs.createdAt, sevenDaysAgo)));
+        const emails7d = Number(emails7dR.count);
+        const callToEmailPct = (emails7d / calls7d) * 100;
+
+        if (callToEmailPct < 20) {
+          alerts.push({
+            type: 'low_conversion',
+            callerId: caller.id,
+            callerName: caller.name,
+            message: `${caller.name} has ${callToEmailPct.toFixed(1)}% call-to-email rate (last 7 days)`,
+            severity: 'warning',
+          });
+        }
+
+        const [noAnswer7dR] = await db.select({ count: sql<number>`count(*)` }).from(callLogs)
+          .where(and(eq(callLogs.userId, caller.id), gte(callLogs.calledAt, sevenDaysAgo), eq(callLogs.outcome, "NO_ANSWER")));
+        const noAnswer7d = Number(noAnswer7dR.count);
+        const noAnswerPct = (noAnswer7d / calls7d) * 100;
+
+        if (noAnswerPct > 70) {
+          alerts.push({
+            type: 'high_no_answer',
+            callerId: caller.id,
+            callerName: caller.name,
+            message: `${caller.name} has ${noAnswerPct.toFixed(1)}% NO_ANSWER rate (last 7 days)`,
+            severity: 'info',
+          });
+        }
+      }
+
+      const [assignedR] = await db.select({ count: sql<number>`count(*)` }).from(leads)
+        .where(eq(leads.assignedToUserId, caller.id));
+      const assigned = Number(assignedR.count);
+
+      if (assigned > 0) {
+        const [unreachableR] = await db.select({ count: sql<number>`count(*)` }).from(leads)
+          .where(and(eq(leads.assignedToUserId, caller.id), eq(leads.unreachable, true)));
+        const unreachable = Number(unreachableR.count);
+        const unreachablePct = (unreachable / assigned) * 100;
+
+        if (unreachablePct > 30) {
+          alerts.push({
+            type: 'high_unreachable',
+            callerId: caller.id,
+            callerName: caller.name,
+            message: `${caller.name} has ${unreachablePct.toFixed(1)}% unreachable leads`,
+            severity: 'warning',
+          });
+        }
+      }
+    }
+
+    return alerts;
+  }
+
+  async getCategoryStateAnalysis(range: "week" | "month" | "all"): Promise<{
+    byState: { state: string; calls: number; emails: number; signups: number; conversionPct: number }[];
+    byCategory: { category: string; calls: number; emails: number; signups: number; conversionPct: number }[];
+    byRatingBand: { band: string; calls: number; signups: number; conversionPct: number }[];
+    bySourceFile: { sourceFile: string; totalLeads: number; calls: number; signups: number; conversionPct: number }[];
+  }> {
+    const now = new Date();
+    let startDate: Date | null = null;
+    if (range === "week") {
+      startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else if (range === "month") {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    const dateFilter = startDate ? gte(callLogs.calledAt, startDate) : sql`1=1`;
+    const leadDateFilter = startDate ? gte(leads.signedUpAt, startDate) : sql`1=1`;
+
+    const [stateCallRows, stateEmailRows, stateSignupRows] = await Promise.all([
+      db.select({
+        state: leads.state,
+        cnt: count(callLogs.id),
+      }).from(callLogs)
+        .innerJoin(leads, eq(callLogs.leadId, leads.id))
+        .where(and(dateFilter, sql`${leads.state} IS NOT NULL AND ${leads.state} != ''`))
+        .groupBy(leads.state),
+      db.select({
+        state: leads.state,
+        cnt: count(emailLogs.id),
+      }).from(emailLogs)
+        .innerJoin(leads, eq(emailLogs.leadId, leads.id))
+        .where(and(startDate ? gte(emailLogs.createdAt, startDate) : sql`1=1`, sql`${leads.state} IS NOT NULL AND ${leads.state} != ''`))
+        .groupBy(leads.state),
+      db.select({
+        state: leads.state,
+        cnt: count(leads.id),
+      }).from(leads)
+        .where(and(eq(leads.statusSignup, "SIGNED_UP"), leadDateFilter, sql`${leads.state} IS NOT NULL AND ${leads.state} != ''`))
+        .groupBy(leads.state),
+    ]);
+
+    const stateMap = new Map<string, { calls: number; emails: number; signups: number }>();
+    for (const r of stateCallRows) {
+      const s = r.state || "Unknown";
+      const entry = stateMap.get(s) || { calls: 0, emails: 0, signups: 0 };
+      entry.calls = Number(r.cnt);
+      stateMap.set(s, entry);
+    }
+    for (const r of stateEmailRows) {
+      const s = r.state || "Unknown";
+      const entry = stateMap.get(s) || { calls: 0, emails: 0, signups: 0 };
+      entry.emails = Number(r.cnt);
+      stateMap.set(s, entry);
+    }
+    for (const r of stateSignupRows) {
+      const s = r.state || "Unknown";
+      const entry = stateMap.get(s) || { calls: 0, emails: 0, signups: 0 };
+      entry.signups = Number(r.cnt);
+      stateMap.set(s, entry);
+    }
+    const byState = Array.from(stateMap.entries()).map(([state, d]) => ({
+      state, ...d, conversionPct: d.calls > 0 ? Math.round((d.signups / d.calls) * 10000) / 100 : 0,
+    })).sort((a, b) => b.calls - a.calls);
+
+    const [catCallRows, catEmailRows, catSignupRows] = await Promise.all([
+      db.select({
+        category: leads.categoryKeyword,
+        cnt: count(callLogs.id),
+      }).from(callLogs)
+        .innerJoin(leads, eq(callLogs.leadId, leads.id))
+        .where(and(dateFilter, sql`${leads.categoryKeyword} IS NOT NULL AND ${leads.categoryKeyword} != ''`))
+        .groupBy(leads.categoryKeyword),
+      db.select({
+        category: leads.categoryKeyword,
+        cnt: count(emailLogs.id),
+      }).from(emailLogs)
+        .innerJoin(leads, eq(emailLogs.leadId, leads.id))
+        .where(and(startDate ? gte(emailLogs.createdAt, startDate) : sql`1=1`, sql`${leads.categoryKeyword} IS NOT NULL AND ${leads.categoryKeyword} != ''`))
+        .groupBy(leads.categoryKeyword),
+      db.select({
+        category: leads.categoryKeyword,
+        cnt: count(leads.id),
+      }).from(leads)
+        .where(and(eq(leads.statusSignup, "SIGNED_UP"), leadDateFilter, sql`${leads.categoryKeyword} IS NOT NULL AND ${leads.categoryKeyword} != ''`))
+        .groupBy(leads.categoryKeyword),
+    ]);
+
+    const catMap = new Map<string, { calls: number; emails: number; signups: number }>();
+    for (const r of catCallRows) {
+      const c = r.category || "Unknown";
+      const entry = catMap.get(c) || { calls: 0, emails: 0, signups: 0 };
+      entry.calls = Number(r.cnt);
+      catMap.set(c, entry);
+    }
+    for (const r of catEmailRows) {
+      const c = r.category || "Unknown";
+      const entry = catMap.get(c) || { calls: 0, emails: 0, signups: 0 };
+      entry.emails = Number(r.cnt);
+      catMap.set(c, entry);
+    }
+    for (const r of catSignupRows) {
+      const c = r.category || "Unknown";
+      const entry = catMap.get(c) || { calls: 0, emails: 0, signups: 0 };
+      entry.signups = Number(r.cnt);
+      catMap.set(c, entry);
+    }
+    const byCategory = Array.from(catMap.entries()).map(([category, d]) => ({
+      category, ...d, conversionPct: d.calls > 0 ? Math.round((d.signups / d.calls) * 10000) / 100 : 0,
+    })).sort((a, b) => b.calls - a.calls);
+
+    const ratingBands = [
+      { band: "No Rating", condition: sql`(${leads.rating} IS NULL OR ${leads.rating}::text = '')` },
+      { band: "1-2", condition: sql`${leads.rating}::numeric >= 1 AND ${leads.rating}::numeric < 2` },
+      { band: "2-3", condition: sql`${leads.rating}::numeric >= 2 AND ${leads.rating}::numeric < 3` },
+      { band: "3-4", condition: sql`${leads.rating}::numeric >= 3 AND ${leads.rating}::numeric < 4` },
+      { band: "4-5", condition: sql`${leads.rating}::numeric >= 4 AND ${leads.rating}::numeric <= 5` },
+    ];
+
+    const byRatingBand: { band: string; calls: number; signups: number; conversionPct: number }[] = [];
+    for (const rb of ratingBands) {
+      const [callR] = await db.select({ cnt: count(callLogs.id) }).from(callLogs)
+        .innerJoin(leads, eq(callLogs.leadId, leads.id))
+        .where(and(dateFilter, rb.condition));
+      const [signupR] = await db.select({ cnt: count(leads.id) }).from(leads)
+        .where(and(eq(leads.statusSignup, "SIGNED_UP"), leadDateFilter, rb.condition));
+      const calls = Number(callR.cnt);
+      const signups = Number(signupR.cnt);
+      byRatingBand.push({
+        band: rb.band,
+        calls,
+        signups,
+        conversionPct: calls > 0 ? Math.round((signups / calls) * 10000) / 100 : 0,
+      });
+    }
+
+    const [sfCallRows, sfSignupRows, sfTotalRows] = await Promise.all([
+      db.select({
+        sourceFile: leads.sourceFile,
+        cnt: count(callLogs.id),
+      }).from(callLogs)
+        .innerJoin(leads, eq(callLogs.leadId, leads.id))
+        .where(and(dateFilter, sql`${leads.sourceFile} IS NOT NULL AND ${leads.sourceFile} != ''`))
+        .groupBy(leads.sourceFile),
+      db.select({
+        sourceFile: leads.sourceFile,
+        cnt: count(leads.id),
+      }).from(leads)
+        .where(and(eq(leads.statusSignup, "SIGNED_UP"), leadDateFilter, sql`${leads.sourceFile} IS NOT NULL AND ${leads.sourceFile} != ''`))
+        .groupBy(leads.sourceFile),
+      db.select({
+        sourceFile: leads.sourceFile,
+        cnt: count(leads.id),
+      }).from(leads)
+        .where(sql`${leads.sourceFile} IS NOT NULL AND ${leads.sourceFile} != ''`)
+        .groupBy(leads.sourceFile),
+    ]);
+
+    const sfMap = new Map<string, { totalLeads: number; calls: number; signups: number }>();
+    for (const r of sfTotalRows) {
+      const sf = r.sourceFile || "Unknown";
+      const entry = sfMap.get(sf) || { totalLeads: 0, calls: 0, signups: 0 };
+      entry.totalLeads = Number(r.cnt);
+      sfMap.set(sf, entry);
+    }
+    for (const r of sfCallRows) {
+      const sf = r.sourceFile || "Unknown";
+      const entry = sfMap.get(sf) || { totalLeads: 0, calls: 0, signups: 0 };
+      entry.calls = Number(r.cnt);
+      sfMap.set(sf, entry);
+    }
+    for (const r of sfSignupRows) {
+      const sf = r.sourceFile || "Unknown";
+      const entry = sfMap.get(sf) || { totalLeads: 0, calls: 0, signups: 0 };
+      entry.signups = Number(r.cnt);
+      sfMap.set(sf, entry);
+    }
+    const bySourceFile = Array.from(sfMap.entries()).map(([sourceFile, d]) => ({
+      sourceFile, ...d, conversionPct: d.calls > 0 ? Math.round((d.signups / d.calls) * 10000) / 100 : 0,
+    })).sort((a, b) => b.totalLeads - a.totalLeads);
+
+    return { byState, byCategory, byRatingBand, bySourceFile };
   }
 }
 

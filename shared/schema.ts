@@ -99,6 +99,8 @@ export const leads = pgTable("leads", {
   signedUpEmail: text("signed_up_email"),
   signedUpUserId: text("signed_up_user_id"),
   signupSource: text("signup_source"),
+  leadScore: integer("lead_score").default(0),
+  leadScoreUpdatedAt: timestamp("lead_score_updated_at"),
   assignedToUserId: integer("assigned_to_user_id").references(() => users.id),
   assignedAt: timestamp("assigned_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),

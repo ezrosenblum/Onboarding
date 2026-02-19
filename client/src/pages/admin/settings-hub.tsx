@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Settings, Save, Loader2, RefreshCw, AlertCircle, Shield, Phone, Activity } from "lucide-react";
+import { Settings, Save, Loader2, RefreshCw, AlertCircle, Shield, Phone, Activity, Target, Download } from "lucide-react";
 import { useState, useEffect } from "react";
 
 interface PipelineHealth {
@@ -18,6 +18,15 @@ interface PipelineHealth {
   unreachableCount: number;
   activePending: number;
   clickedNotSignedUp: number;
+}
+
+interface LeadScoreWeights {
+  score_weight_email: number;
+  score_weight_website: number;
+  score_weight_rating: number;
+  score_weight_reviews: number;
+  score_weight_phone: number;
+  score_weight_clicked: number;
 }
 
 export default function SettingsHubPage() {
@@ -35,10 +44,21 @@ export default function SettingsHubPage() {
     queryKey: ["/api/admin/pipeline-health"],
   });
 
+  const { data: scoreWeights } = useQuery<LeadScoreWeights>({
+    queryKey: ["/api/admin/lead-score-weights"],
+  });
+
   const [maxRetryAttempts, setMaxRetryAttempts] = useState("3");
   const [retryDelayDays, setRetryDelayDays] = useState("2");
   const [warningWindow, setWarningWindow] = useState("15");
   const [disclaimer, setDisclaimer] = useState("");
+
+  const [weightEmail, setWeightEmail] = useState(20);
+  const [weightWebsite, setWeightWebsite] = useState(15);
+  const [weightRating, setWeightRating] = useState(25);
+  const [weightReviews, setWeightReviews] = useState(15);
+  const [weightPhone, setWeightPhone] = useState(15);
+  const [weightClicked, setWeightClicked] = useState(10);
 
   useEffect(() => {
     if (settings) {
@@ -53,6 +73,17 @@ export default function SettingsHubPage() {
       setDisclaimer(disclaimerData.disclaimer ?? "");
     }
   }, [disclaimerData]);
+
+  useEffect(() => {
+    if (scoreWeights) {
+      setWeightEmail(scoreWeights.score_weight_email);
+      setWeightWebsite(scoreWeights.score_weight_website);
+      setWeightRating(scoreWeights.score_weight_rating);
+      setWeightReviews(scoreWeights.score_weight_reviews);
+      setWeightPhone(scoreWeights.score_weight_phone);
+      setWeightClicked(scoreWeights.score_weight_clicked);
+    }
+  }, [scoreWeights]);
 
   const saveSettingMutation = useMutation({
     mutationFn: async (data: { key: string; value: string }) => {
@@ -75,6 +106,30 @@ export default function SettingsHubPage() {
     },
     onError: () => toast({ title: "Failed to save disclaimer", variant: "destructive" }),
   });
+
+  const saveWeightsMutation = useMutation({
+    mutationFn: async (weights: LeadScoreWeights) => {
+      await apiRequest("PUT", "/api/admin/lead-score-weights", { weights });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/lead-score-weights"] });
+      toast({ title: "Lead scoring weights saved" });
+    },
+    onError: () => toast({ title: "Failed to save weights", variant: "destructive" }),
+  });
+
+  const recalcScoresMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/leads/recalculate-scores");
+      return res.json();
+    },
+    onSuccess: (data: { updated: number }) => {
+      toast({ title: `Recalculated scores for ${data.updated} leads` });
+    },
+    onError: () => toast({ title: "Failed to recalculate scores", variant: "destructive" }),
+  });
+
+  const weightTotal = weightEmail + weightWebsite + weightRating + weightReviews + weightPhone + weightClicked;
 
   const isLoading = settingsLoading || disclaimerLoading;
 
@@ -228,6 +283,160 @@ export default function SettingsHubPage() {
                   <p className="text-xs text-muted-foreground">Webhook events are processed automatically</p>
                 </div>
                 <Badge variant="secondary" data-testid="badge-signup-events">Active</Badge>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="card-lead-score-weights">
+            <CardHeader className="pb-3">
+              <h3 className="font-semibold flex items-center gap-2">
+                <Target className="h-4 w-4 text-muted-foreground" /> Lead Scoring Weights
+              </h3>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="weight-email">Email Available</Label>
+                  <Input
+                    id="weight-email"
+                    type="number"
+                    min="0"
+                    value={weightEmail}
+                    onChange={(e) => setWeightEmail(Number(e.target.value))}
+                    data-testid="input-weight-email"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="weight-website">Website Available</Label>
+                  <Input
+                    id="weight-website"
+                    type="number"
+                    min="0"
+                    value={weightWebsite}
+                    onChange={(e) => setWeightWebsite(Number(e.target.value))}
+                    data-testid="input-weight-website"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="weight-rating">Google Rating</Label>
+                  <Input
+                    id="weight-rating"
+                    type="number"
+                    min="0"
+                    value={weightRating}
+                    onChange={(e) => setWeightRating(Number(e.target.value))}
+                    data-testid="input-weight-rating"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="weight-reviews">Review Count</Label>
+                  <Input
+                    id="weight-reviews"
+                    type="number"
+                    min="0"
+                    value={weightReviews}
+                    onChange={(e) => setWeightReviews(Number(e.target.value))}
+                    data-testid="input-weight-reviews"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="weight-phone">Phone Available</Label>
+                  <Input
+                    id="weight-phone"
+                    type="number"
+                    min="0"
+                    value={weightPhone}
+                    onChange={(e) => setWeightPhone(Number(e.target.value))}
+                    data-testid="input-weight-phone"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="weight-clicked">Clicked Link</Label>
+                  <Input
+                    id="weight-clicked"
+                    type="number"
+                    min="0"
+                    value={weightClicked}
+                    onChange={(e) => setWeightClicked(Number(e.target.value))}
+                    data-testid="input-weight-clicked"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm text-muted-foreground" data-testid="text-weight-total">
+                  Total: <span className="font-semibold">{weightTotal}</span>
+                  {weightTotal !== 100 && (
+                    <span className="ml-1 text-yellow-600 dark:text-yellow-400">(recommended: 100)</span>
+                  )}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  onClick={() =>
+                    saveWeightsMutation.mutate({
+                      score_weight_email: weightEmail,
+                      score_weight_website: weightWebsite,
+                      score_weight_rating: weightRating,
+                      score_weight_reviews: weightReviews,
+                      score_weight_phone: weightPhone,
+                      score_weight_clicked: weightClicked,
+                    })
+                  }
+                  disabled={saveWeightsMutation.isPending}
+                  data-testid="button-save-weights"
+                >
+                  {saveWeightsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+                  Save Weights
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => recalcScoresMutation.mutate()}
+                  disabled={recalcScoresMutation.isPending}
+                  data-testid="button-recalculate-scores"
+                >
+                  {recalcScoresMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+                  Recalculate All Scores
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card data-testid="card-data-export">
+            <CardHeader className="pb-3">
+              <h3 className="font-semibold flex items-center gap-2">
+                <Download className="h-4 w-4 text-muted-foreground" /> Data Export
+              </h3>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  onClick={() => window.open("/api/admin/export/leads", "_blank")}
+                  data-testid="button-export-leads"
+                >
+                  <Download className="h-4 w-4 mr-1" /> Export Leads
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => window.open("/api/admin/export/call-logs", "_blank")}
+                  data-testid="button-export-call-logs"
+                >
+                  <Download className="h-4 w-4 mr-1" /> Export Call Logs
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => window.open("/api/admin/export/email-logs", "_blank")}
+                  data-testid="button-export-email-logs"
+                >
+                  <Download className="h-4 w-4 mr-1" /> Export Email Logs
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => window.open("/api/admin/export/signups", "_blank")}
+                  data-testid="button-export-signups"
+                >
+                  <Download className="h-4 w-4 mr-1" /> Export Signups
+                </Button>
               </div>
             </CardContent>
           </Card>

@@ -59,6 +59,52 @@ function addBusinessDays(date: Date, days: number): Date {
   return result;
 }
 
+function calculateLeadScore(lead: any, weights: Record<string, number>): number {
+  let score = 0;
+
+  if (lead.confirmedEmail?.trim() || lead.scrapedEmail?.trim()) {
+    score += weights.score_weight_email || 20;
+  }
+
+  if (lead.website?.trim()) {
+    score += weights.score_weight_website || 15;
+  }
+
+  const maxRatingWeight = weights.score_weight_rating || 20;
+  if (lead.rating != null && lead.rating !== "") {
+    const rating = parseFloat(lead.rating);
+    if (!isNaN(rating)) {
+      score += Math.round((rating / 5) * maxRatingWeight);
+    } else {
+      score += Math.round(maxRatingWeight / 2);
+    }
+  } else {
+    score += Math.round(maxRatingWeight / 2);
+  }
+
+  const maxReviewWeight = weights.score_weight_reviews || 15;
+  const reviews = lead.reviewsCount || 0;
+  if (reviews === 0) {
+    score += 0;
+  } else if (reviews <= 10) {
+    score += Math.round(maxReviewWeight / 3);
+  } else if (reviews <= 50) {
+    score += Math.round((maxReviewWeight * 2) / 3);
+  } else {
+    score += maxReviewWeight;
+  }
+
+  if (lead.phone?.trim()) {
+    score += weights.score_weight_phone || 10;
+  }
+
+  if (lead.statusEmail === "CLICKED") {
+    score += weights.score_weight_clicked || 20;
+  }
+
+  return Math.min(100, Math.max(0, score));
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -1392,6 +1438,62 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(404).json({ message: err.message || "User not found" });
     }
+  });
+
+  // ──────────── Stage 8: Scaling, Optimization & Automation ────────────
+
+  app.get("/api/admin/lead-score-weights", requireAuth, requireAdmin, async (_req, res) => {
+    const weights = await storage.getLeadScoreWeights();
+    res.json(weights);
+  });
+
+  app.put("/api/admin/lead-score-weights", requireAuth, requireAdmin, async (req, res) => {
+    const { weights } = req.body;
+    if (!weights || typeof weights !== "object") {
+      return res.status(400).json({ message: "weights object is required" });
+    }
+    for (const [key, value] of Object.entries(weights)) {
+      if (key.startsWith("score_weight_")) {
+        await storage.setSetting(key, String(value));
+      }
+    }
+    res.json({ success: true });
+  });
+
+  app.post("/api/admin/leads/recalculate-scores", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const allLeads = await storage.getAllLeads();
+      const weights = await storage.getLeadScoreWeights();
+      let updated = 0;
+      const now = new Date();
+      for (const lead of allLeads) {
+        const score = calculateLeadScore(lead, weights);
+        await storage.updateLead(lead.id, { leadScore: score, leadScoreUpdatedAt: now });
+        updated++;
+      }
+      res.json({ updated });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message || "Failed to recalculate scores" });
+    }
+  });
+
+  app.get("/api/admin/leak-report", requireAuth, requireAdmin, async (_req, res) => {
+    const report = await storage.getLeakReport();
+    res.json(report);
+  });
+
+  app.get("/api/admin/alerts", requireAuth, requireAdmin, async (_req, res) => {
+    const alerts = await storage.getCallerAlerts();
+    res.json(alerts);
+  });
+
+  app.get("/api/admin/analytics/category-state", requireAuth, requireAdmin, async (req, res) => {
+    const range = (req.query.range as string) || "month";
+    if (!["week", "month", "all"].includes(range)) {
+      return res.status(400).json({ message: "Range must be week, month, or all" });
+    }
+    const analysis = await storage.getCategoryStateAnalysis(range as "week" | "month" | "all");
+    res.json(analysis);
   });
 
   return httpServer;
