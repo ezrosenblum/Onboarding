@@ -79,7 +79,8 @@ The application features a modern full-stack architecture. The **frontend** is b
 ## Recent Changes (Feb 2026)
 *   **User Management:** Admins can now edit (name, email, role, password) and delete users from the Manage Users page.
 *   **Lead Management:** All Vendor Leads page now supports inline editing, single delete, checkbox multi-select, and bulk delete operations.
-*   **Assign Batch:** Reworked to show a filterable lead list (state, category, rating, phone, email, unassigned) with checkbox selection for batch assignment to callers.
+*   **Assign Batch:** Reworked to show a filterable lead list (state, category, rating, phone, email, unassigned) with checkbox selection for batch assignment to callers. Added caller queue alerts showing callers with uncalled leads remaining, with inline warning when selecting such a caller.
+*   **Daily Assignments (Performance):** New expandable section on Performance Dashboard showing daily assignment history (last 14 days). Date rows expand to show per-caller breakdowns with progress bars, which further expand to show individual lead details with call status badges.
 *   **Email Templates:** Added "Create New Template" with name and sequence number fields for ordering templates (sequence 1 = first email after call, etc.).
 *   **AI Prompts:** Vendor and buyer pipelines now have separate dedicated prompt templates shown side by side, with create button for missing pipelines.
 *   **Settings Hub:** Added clarifying descriptions for retry settings, explaining retry behavior, delay spacing, and business hours warning.
