@@ -249,6 +249,11 @@ export async function registerRoutes(
     res.json(updated);
   });
 
+  app.get("/api/leads/active-assigned", requireAdmin, async (req, res) => {
+    const allAssigned = await storage.getActiveAssignedLeads();
+    res.json(allAssigned);
+  });
+
   app.get("/api/leads/assigned-today", requireAdmin, async (req, res) => {
     const result = await storage.getLeadsAssignedToday();
     res.json(result);

@@ -64,6 +64,7 @@ export interface IStorage {
   assignLeads(callerId: number, count: number, filters?: { state?: string; category?: string; minRating?: number; hasPhone?: boolean; hasEmail?: boolean }): Promise<number>;
 
   getArchivedLeads(pipelineType?: string): Promise<Lead[]>;
+  getActiveAssignedLeads(): Promise<Lead[]>;
   getNewLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
   getRetryLeads(userId: number, includeUnreachable?: boolean): Promise<Lead[]>;
   getRetryEligibleCount(userId: number): Promise<number>;
@@ -261,6 +262,16 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(leads)
       .where(eq(leads.isArchived, true))
       .orderBy(desc(leads.archivedAt));
+  }
+
+  async getActiveAssignedLeads(): Promise<Lead[]> {
+    return db.select().from(leads)
+      .where(and(
+        sql`${leads.assignedToUserId} IS NOT NULL`,
+        eq(leads.pipelineType, "vendor"),
+        eq(leads.isArchived, false),
+      ))
+      .orderBy(desc(leads.assignedAt));
   }
 
   async getLeadsByUserId(userId: number): Promise<Lead[]> {
